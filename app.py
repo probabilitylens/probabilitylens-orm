@@ -83,7 +83,28 @@ def _interpret(decision: str, score: float) -> str:
     if decision == "NONE" and score >= 0.7:
         return "High readiness — conditions largely in place, waiting for final strengthening."
     return "Insufficient signal — no action warranted."
+def _load_preset(preset: str):
+    if preset == "Bullish Supply Shock":
+        return dict(edge_score=2, timing_score=1, confirmation_score=1,
+                    network_score=0.7, reflex_score=0.3, health=0.8,
+                    max_prop=80.0, portfolio_headroom=0.1)
 
+    elif preset == "Demand Collapse":
+        return dict(edge_score=2, timing_score=1, confirmation_score=1,
+                    network_score=0.6, reflex_score=0.2, health=0.7,
+                    max_prop=75.0, portfolio_headroom=0.1)
+
+    elif preset == "Geopolitical Risk Spike":
+        return dict(edge_score=1, timing_score=1, confirmation_score=0,
+                    network_score=0.4, reflex_score=0.6, health=0.7,
+                    max_prop=60.0, portfolio_headroom=0.05)
+
+    elif preset == "Late Cycle Exhaustion":
+        return dict(edge_score=1, timing_score=0, confirmation_score=0,
+                    network_score=0.3, reflex_score=0.85, health=0.5,
+                    max_prop=55.0, portfolio_headroom=0.0)
+
+    return None
 
 # ── Layout ─────────────────────────────────────────────────────────────────────
 left, center, right = st.columns([1, 1.5, 1], gap="large")
