@@ -7,18 +7,16 @@ st.caption("Deterministic Macro Decision Engine (FSM-based)")
 
 st.divider()
 
-# ── FSM LOGIC ─────────────────────────────────────────────
+# ── FSM ENGINE ───────────────────────────────────────────
 
 def evaluate_fsm(state):
-    # EXIT
+
     if state["max_prop"] < 50:
         decision = "EXIT"
 
-    # REDUCE
     elif state["reflex_score"] >= 0.8 or state["health"] < 0.6:
         decision = "REDUCE"
 
-    # ADD
     elif (
         state["edge_score"] == 2 and
         state["timing_score"] == 1 and
@@ -33,7 +31,6 @@ def evaluate_fsm(state):
     else:
         decision = "NONE"
 
-    # Decision score (fraction of ADD conditions met)
     conditions = [
         state["edge_score"] == 2,
         state["timing_score"] == 1,
@@ -46,7 +43,6 @@ def evaluate_fsm(state):
 
     decision_score = sum(conditions) / len(conditions)
 
-    # Missing conditions
     missing = []
     if state["edge_score"] != 2:
         missing.append("edge_score != 2")
@@ -63,7 +59,6 @@ def evaluate_fsm(state):
     if state["health"] < 0.6:
         missing.append("health < 0.6")
 
-    # Transition status
     if decision_score < 0.4:
         status = "PREPARATION"
     elif decision_score < 0.7:
@@ -77,9 +72,7 @@ def evaluate_fsm(state):
         "decision": decision,
         "decision_score": decision_score,
         "transition_status": status,
-        "trigger_gap": {
-            "missing_conditions": missing
-        },
+        "trigger_gap": {"missing_conditions": missing},
         "state": state
     }
 
@@ -88,48 +81,55 @@ def evaluate_fsm(state):
 
 def interpret(decision, score):
     if decision == "ADD":
-        return "Actionable — all conditions satisfied."
+        return "Conditions aligned for position expansion."
     if decision == "REDUCE":
-        return "Risk deterioration — reducing exposure."
+        return "Risk increasing — reduce exposure."
     if decision == "EXIT":
-        return "Invalidated — exit conditions met."
+        return "No valid environment — exit positions."
     if decision == "NONE" and score >= 0.7:
-        return "High readiness — waiting for final confirmation."
-    return "Insufficient signal — no action warranted."
+        return "Close to actionable — waiting for final trigger."
+    return "Monitoring — no action."
 
 
 # ── EXPLANATION ──────────────────────────────────────────
 
 def explain(state, decision):
-    reasons = []
-
     if decision == "ADD":
-        if state["edge_score"] == 2:
-            reasons.append("Strong edge identified")
-        if state["timing_score"] == 1:
-            reasons.append("Timing conditions favorable")
-        if state["confirmation_score"] == 1:
-            reasons.append("Market confirmation present")
-        if state["network_score"] >= 0.5:
-            reasons.append("Cross-market alignment supportive")
-        if state["reflex_score"] < 0.8:
-            reasons.append("No overcrowding / reflex risk")
-        if state["health"] >= 0.6:
-            reasons.append("System health stable")
+        return ["All ADD conditions satisfied"]
 
-    elif decision == "REDUCE":
+    if decision == "REDUCE":
+        reasons = []
         if state["reflex_score"] >= 0.8:
-            reasons.append("Crowded positioning / reflex risk elevated")
+            reasons.append("Reflex risk elevated")
         if state["health"] < 0.6:
-            reasons.append("System health deteriorating")
+            reasons.append("Health deteriorating")
+        return reasons
 
-    elif decision == "EXIT":
-        reasons.append("Insufficient propagation (<50)")
+    if decision == "EXIT":
+        return ["Propagation insufficient (<50)"]
 
-    else:
-        reasons.append("Conditions not sufficient for action")
+    return ["Conditions not sufficient for action"]
 
-    return reasons
+
+# ── WHY NOT ADD ──────────────────────────────────────────
+
+def explain_not_add(state, missing):
+
+    mapping = {
+        "edge_score != 2": f"Edge not strong ({state['edge_score']} → 2 required)",
+        "timing_score != 1": "Timing not active",
+        "confirmation_score != 1": "Confirmation missing",
+        "network_score < 0.5": f"Network too weak ({state['network_score']:.2f} < 0.50)",
+        "reflex_score >= 0.8": f"Reflex risk too high ({state['reflex_score']:.2f} ≥ 0.80)",
+        "portfolio_headroom <= 0": "No portfolio headroom",
+        "health < 0.6": f"Health too low ({state['health']:.2f} < 0.60)",
+    }
+
+    explanations = [mapping[m] for m in missing]
+
+    next_trigger = explanations[0] if explanations else "All conditions satisfied"
+
+    return explanations, next_trigger
 
 
 # ── LAYOUT ───────────────────────────────────────────────
@@ -185,7 +185,6 @@ with center:
         decision = result["decision"]
         score = result["decision_score"]
 
-        # Decision
         if decision == "ADD":
             st.success(f"Decision: {decision}")
         elif decision == "REDUCE":
@@ -205,9 +204,7 @@ with center:
         st.divider()
 
         st.subheader("Why this decision")
-        reasons = explain(result["state"], decision)
-
-        for r in reasons:
+        for r in explain(result["state"], decision):
             st.write(f"• {r}")
 
         st.divider()
@@ -216,20 +213,29 @@ with center:
             st.write(result["state"])
 
 
-# ── TRIGGER GAP ──────────────────────────────────────────
+# ── WHY NOT ADD PANEL ────────────────────────────────────
 
 with right:
-    st.subheader("Trigger Gap")
+    st.subheader("Why NOT ADD")
 
     if "result" not in st.session_state:
         st.info("Run evaluation.")
 
     else:
+        result = st.session_state.result
         missing = result["trigger_gap"]["missing_conditions"]
 
         if not missing:
-            st.success("All ADD conditions are satisfied.")
+            st.success("All ADD conditions satisfied.")
+
         else:
-            st.markdown(f"**{len(missing)} condition(s) blocking ADD:**")
-            for m in missing:
-                st.error(m)
+            explanations, next_trigger = explain_not_add(result["state"], missing)
+
+            st.markdown("**ADD blocked because:**")
+            for e in explanations:
+                st.error(e)
+
+            st.divider()
+
+            st.markdown("**Next trigger:**")
+            st.success(next_trigger)
