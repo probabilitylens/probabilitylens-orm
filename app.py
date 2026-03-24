@@ -2,19 +2,22 @@ import streamlit as st
 
 st.set_page_config(page_title="ProbabilityLens ORM", layout="wide")
 
-# ── HEADER ───────────────────────────────────────────────
+# ── HERO / HEADER ───────────────────────────────────────
 
-st.title("ProbabilityLens — Oil Risk Monitor")
+col1, col2, col3 = st.columns([1,2,1])
+with col2:
+    st.image("logo.png", width=220)
+
+st.markdown("## Oil Risk Monitor")
 st.caption("Deterministic Macro Decision Engine for Oil Markets")
 
 st.markdown(
 """
-**What this does:**  
-Transforms macro conditions into structured trading decisions using a deterministic rule-based system.
+Transforms macro conditions into **structured, rule-based trading decisions**.
+
+This system does **not predict prices** — it identifies when conditions justify action.
 """
 )
-
-st.info("This system does not predict prices — it identifies when conditions justify action.")
 
 st.divider()
 
@@ -44,7 +47,7 @@ def load_preset(preset):
     return None
 
 
-# ── FSM ENGINE ───────────────────────────────────────────
+# ── ENGINE ──────────────────────────────────────────────
 
 def evaluate_fsm(state):
 
@@ -66,7 +69,7 @@ def evaluate_fsm(state):
         decision = "ADD"
 
     else:
-        decision = "WAIT"   # ← upgraded wording
+        decision = "WAIT"
 
     conditions = [
         state["edge_score"] == 2,
@@ -78,7 +81,7 @@ def evaluate_fsm(state):
         state["health"] >= 0.6
     ]
 
-    decision_score = sum(conditions) / len(conditions)
+    score = sum(conditions) / len(conditions)
 
     missing = []
     if state["edge_score"] != 2:
@@ -96,153 +99,132 @@ def evaluate_fsm(state):
     if state["health"] < 0.6:
         missing.append("health < 0.6")
 
-    if decision_score < 0.4:
-        status = "PREPARATION"
-    elif decision_score < 0.7:
-        status = "DEVELOPING"
-    elif decision_score < 1.0:
-        status = "NEAR TRIGGER"
+    if score < 0.4:
+        regime = "PREPARATION"
+    elif score < 0.7:
+        regime = "DEVELOPING"
+    elif score < 1.0:
+        regime = "NEAR TRIGGER"
     else:
-        status = "ACTIONABLE"
+        regime = "ACTIONABLE"
 
     return {
         "decision": decision,
-        "decision_score": decision_score,
-        "transition_status": status,
-        "trigger_gap": {"missing_conditions": missing},
+        "score": score,
+        "regime": regime,
+        "missing": missing,
         "state": state
     }
 
 
-# ── INTERPRETATION ───────────────────────────────────────
+# ── INTERPRETATION ──────────────────────────────────────
 
 def interpret(decision, score):
     if decision == "ADD":
-        return "Conditions aligned — opportunity to increase exposure."
+        return "Conditions aligned — increase exposure."
     if decision == "REDUCE":
-        return "Risk increasing — consider reducing exposure."
+        return "Risk rising — reduce exposure."
     if decision == "EXIT":
-        return "Market structure invalid — exit positions."
-    if decision == "WAIT" and score >= 0.7:
-        return "Close to actionable — waiting for final confirmation."
+        return "Invalid structure — exit positions."
+    if score >= 0.7:
+        return "Close to actionable — awaiting confirmation."
     return "Conditions not yet aligned — remain patient."
 
 
-# ── MARKET BIAS ──────────────────────────────────────────
-
-def market_bias(state):
-    if state["edge_score"] == 2 and state["network_score"] >= 0.5:
-        return "Bullish Bias"
-    if state["health"] < 0.6 or state["reflex_score"] >= 0.8:
-        return "Bearish Risk"
-    return "Neutral"
-
-
-# ── WHY NOT ADD ──────────────────────────────────────────
+# ── WHY NOT ADD ─────────────────────────────────────────
 
 def explain_not_add(state, missing):
 
-    explanation_map = {
+    mapping = {
         "edge_score != 2": f"Opportunity not strong ({state['edge_score']} → strong required)",
         "timing_score != 1": "Timing not aligned",
         "confirmation_score != 1": "Confirmation missing",
-        "network_score < 0.5": f"Market alignment too weak ({state['network_score']:.2f})",
+        "network_score < 0.5": f"Alignment too weak ({state['network_score']:.2f})",
         "reflex_score >= 0.8": "Market overcrowded",
-        "portfolio_headroom <= 0": "No available capital",
-        "health < 0.6": "Market conditions weak",
+        "portfolio_headroom <= 0": "No capital available",
+        "health < 0.6": "Market conditions weak"
     }
 
     trigger_map = {
-        "edge_score != 2": "Strengthen opportunity to strong level",
-        "timing_score != 1": "Wait for timing alignment",
-        "confirmation_score != 1": "Wait for confirmation signal",
-        "network_score < 0.5": "Increase cross-market alignment",
-        "reflex_score >= 0.8": "Reduce market crowding",
-        "portfolio_headroom <= 0": "Free up capital",
-        "health < 0.6": "Wait for market conditions to improve",
+        "edge_score != 2": "Strengthen opportunity",
+        "timing_score != 1": "Wait for timing",
+        "confirmation_score != 1": "Wait for confirmation",
+        "network_score < 0.5": "Improve alignment",
+        "reflex_score >= 0.8": "Reduce crowding",
+        "portfolio_headroom <= 0": "Free capital",
+        "health < 0.6": "Wait for stability"
     }
 
-    explanations = [explanation_map[m] for m in missing]
+    explanations = [mapping[m] for m in missing]
     next_trigger = trigger_map.get(missing[0], explanations[0])
 
     return explanations, next_trigger
 
 
-# ── LAYOUT ───────────────────────────────────────────────
+# ── MAIN LAYOUT ─────────────────────────────────────────
 
-left, center, right = st.columns([1, 1.5, 1], gap="large")
+left, center, right = st.columns([1,1.5,1], gap="large")
 
-# ── INPUTS ───────────────────────────────────────────────
-
+# INPUTS
 with left:
-    st.subheader("Scenario Setup")
+    st.subheader("Scenario")
 
     preset = st.selectbox(
-        "Preset Market Scenario",
+        "Preset",
         ["Manual", "Bullish Supply Shock", "Demand Collapse",
          "Geopolitical Risk Spike", "Late Cycle Exhaustion"]
     )
 
-    preset_values = load_preset(preset)
+    preset_data = load_preset(preset)
 
-    if preset_values:
-        state = preset_values
+    if preset_data:
+        state = preset_data
     else:
         state = {
-            "edge_score": st.selectbox("Opportunity Strength", [0, 1, 2]),
-            "timing_score": st.selectbox("Timing Alignment", [0, 1]),
-            "confirmation_score": st.selectbox("Market Confirmation", [0, 1]),
-            "network_score": st.slider("Cross-Market Alignment", 0.0, 1.0, 0.5),
-            "reflex_score": st.slider("Crowding / Reflexivity", 0.0, 1.0, 0.3),
-            "health": st.slider("Market Health", 0.0, 1.0, 0.75),
-            "max_prop": st.slider("Portfolio Utilisation", 0.0, 100.0, 75.0),
-            "portfolio_headroom": st.number_input("Available Capital", 0.0, 1.0, 0.05),
+            "edge_score": st.selectbox("Opportunity Strength", [0,1,2]),
+            "timing_score": st.selectbox("Timing Alignment", [0,1]),
+            "confirmation_score": st.selectbox("Confirmation", [0,1]),
+            "network_score": st.slider("Cross-Market Alignment", 0.0,1.0,0.5),
+            "reflex_score": st.slider("Crowding", 0.0,1.0,0.3),
+            "health": st.slider("Market Health", 0.0,1.0,0.75),
+            "max_prop": st.slider("Portfolio Used", 0.0,100.0,75.0),
+            "portfolio_headroom": st.number_input("Free Capital", 0.0,1.0,0.05),
         }
 
-    evaluate = st.button("Evaluate", use_container_width=True)
+    run = st.button("Evaluate", use_container_width=True)
 
 
-# ── RUN ENGINE ───────────────────────────────────────────
-
-if evaluate:
+# RUN
+if run:
     st.session_state.result = evaluate_fsm(state)
 
 
-# ── OUTPUT ───────────────────────────────────────────────
-
+# OUTPUT
 with center:
-    st.subheader("Decision Output")
+    st.subheader("Decision")
 
     if "result" not in st.session_state:
-        st.info("Select a scenario and click Evaluate.")
+        st.info("Select scenario and evaluate.")
 
     else:
-        result = st.session_state.result
-        decision = result["decision"]
-        score = result["decision_score"]
-        status = result["transition_status"]
+        r = st.session_state.result
 
-        st.markdown(f"### {market_bias(result['state'])}")
-        st.markdown(f"**Market Regime:** {status}")
+        st.markdown(f"### {r['regime']}")
+        st.metric("Readiness", f"{r['score']*100:.1f}%")
 
-        if decision == "ADD":
-            st.success(f"Decision: {decision}")
-        elif decision == "REDUCE":
-            st.warning(f"Decision: {decision}")
-        elif decision == "EXIT":
-            st.error(f"Decision: {decision}")
+        if r["decision"] == "ADD":
+            st.success("ADD")
+        elif r["decision"] == "REDUCE":
+            st.warning("REDUCE")
+        elif r["decision"] == "EXIT":
+            st.error("EXIT")
         else:
-            st.info(f"Decision: {decision}")
+            st.info("WAIT")
 
-        st.metric("Readiness", f"{score*100:.1f}%")
-
-        st.divider()
-
-        st.write(interpret(decision, score))
+        st.write(interpret(r["decision"], r["score"]))
 
 
-# ── WHY NOT ADD ──────────────────────────────────────────
-
+# WHY NOT ADD
 with right:
     st.subheader("Why NOT ADD")
 
@@ -250,19 +232,75 @@ with right:
         st.info("Run evaluation.")
 
     else:
-        missing = result["trigger_gap"]["missing_conditions"]
+        missing = st.session_state.result["missing"]
 
         if not missing:
-            st.success("All conditions satisfied.")
+            st.success("All conditions satisfied")
 
         else:
-            explanations, next_trigger = explain_not_add(result["state"], missing)
+            reasons, trigger = explain_not_add(
+                st.session_state.result["state"], missing
+            )
 
-            st.markdown("**Blocking factors:**")
-            for e in explanations:
-                st.error(e)
+            for r in reasons:
+                st.error(r)
 
             st.divider()
+            st.success(f"Next trigger: {trigger}")
 
-            st.markdown("**Next trigger:**")
-            st.success(next_trigger)
+
+st.divider()
+
+# ── ABOUT / METHODOLOGY ─────────────────────────────────
+
+with st.expander("About / Methodology"):
+
+    st.markdown(
+    """
+### Deterministic Decision Framework
+
+This system is **not predictive**.  
+It is a structured framework that defines:
+
+- When to act  
+- When to wait  
+- When to reduce or exit  
+
+---
+
+### Core Logic
+
+Decisions are based on **7 conditions**:
+
+- Opportunity strength  
+- Timing alignment  
+- Market confirmation  
+- Cross-market alignment  
+- Crowding / reflexivity  
+- Market health  
+- Capital availability  
+
+---
+
+### Regime Model
+
+The system tracks progression:
+
+- **Preparation** → weak setup  
+- **Developing** → signal forming  
+- **Near Trigger** → close to actionable  
+- **Actionable** → conditions aligned  
+
+---
+
+### Philosophy
+
+Markets are not about prediction.
+
+They are about:
+
+> Acting only when conditions justify it.
+
+This framework enforces discipline and removes subjective bias.
+    """
+    )
