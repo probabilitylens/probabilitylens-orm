@@ -4,9 +4,11 @@ st.set_page_config(page_title="ProbabilityLens ORM", layout="wide")
 
 # ── HERO / HEADER ───────────────────────────────────────
 
-col1, col2, col3 = st.columns([1,2,1])
-with col2:
-    st.image("logo.png", width=220)
+st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
+st.image("logo.png", width=180)
+st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
 
 st.markdown("## Oil Risk Monitor")
 st.caption("Deterministic Macro Decision Engine for Oil Markets")
@@ -194,7 +196,7 @@ with left:
     run = st.button("Evaluate", use_container_width=True)
 
 
-# RUN
+# RUN ENGINE
 if run:
     st.session_state.result = evaluate_fsm(state)
 
@@ -251,6 +253,27 @@ with right:
 
 st.divider()
 
+# ── HOW TO USE ──────────────────────────────────────────
+
+with st.expander("How to Use"):
+
+    st.markdown(
+    """
+1. Select a market scenario or input your own view  
+2. Click **Evaluate**  
+3. Review:
+   - Market regime  
+   - Readiness score  
+   - Decision (ADD / WAIT / REDUCE / EXIT)  
+4. Use **Why NOT ADD** to understand what is missing  
+
+---
+
+This system is designed to enforce **discipline and timing**, not prediction.
+    """
+    )
+
+
 # ── ABOUT / METHODOLOGY ─────────────────────────────────
 
 with st.expander("About / Methodology"):
@@ -259,9 +282,9 @@ with st.expander("About / Methodology"):
     """
 ### Deterministic Decision Framework
 
-This system is **not predictive**.  
-It is a structured framework that defines:
+This system is **not predictive**.
 
+It defines:
 - When to act  
 - When to wait  
 - When to reduce or exit  
@@ -270,13 +293,13 @@ It is a structured framework that defines:
 
 ### Core Logic
 
-Decisions are based on **7 conditions**:
+7 conditions drive decisions:
 
 - Opportunity strength  
 - Timing alignment  
 - Market confirmation  
 - Cross-market alignment  
-- Crowding / reflexivity  
+- Crowding  
 - Market health  
 - Capital availability  
 
@@ -284,12 +307,10 @@ Decisions are based on **7 conditions**:
 
 ### Regime Model
 
-The system tracks progression:
-
 - **Preparation** → weak setup  
-- **Developing** → signal forming  
-- **Near Trigger** → close to actionable  
-- **Actionable** → conditions aligned  
+- **Developing** → forming  
+- **Near Trigger** → close  
+- **Actionable** → aligned  
 
 ---
 
@@ -300,7 +321,5 @@ Markets are not about prediction.
 They are about:
 
 > Acting only when conditions justify it.
-
-This framework enforces discipline and removes subjective bias.
     """
     )
