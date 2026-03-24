@@ -2,16 +2,16 @@ import streamlit as st
 
 st.set_page_config(page_title="ProbabilityLens ORM", layout="wide")
 
-# ── HERO / HEADER ───────────────────────────────────────
+# ── HERO HEADER (FIXED — PROFESSIONAL LAYOUT) ───────────
 
-st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
-st.image("logo.png", width=180)
-st.markdown("</div>", unsafe_allow_html=True)
+col_logo, col_text = st.columns([1, 3])
 
-st.markdown("<br>", unsafe_allow_html=True)
+with col_logo:
+    st.image("logo.png", width=140)
 
-st.markdown("## Oil Risk Monitor")
-st.caption("Deterministic Macro Decision Engine for Oil Markets")
+with col_text:
+    st.markdown("## Oil Risk Monitor")
+    st.caption("Deterministic Macro Decision Engine for Oil Markets")
 
 st.markdown(
 """
@@ -269,7 +269,7 @@ with st.expander("How to Use"):
 
 ---
 
-This system is designed to enforce **discipline and timing**, not prediction.
+This system enforces **discipline and timing**, not prediction.
     """
     )
 
