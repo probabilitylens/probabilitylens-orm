@@ -307,7 +307,7 @@ with center:
             st.info(interpretation)
             st.caption(next_trig)
 
-        st.divider()
+st.divider()
 
 st.subheader("Why this decision")
 
@@ -316,12 +316,13 @@ reasons = _explain(state, decision)
 
 for r in reasons:
     st.write(f"• {r}")
-        
- # State summary
- with st.expander("State details"):
+
+st.divider()
+
+with st.expander("State details"):
     s = result["state"]
     st.table({
-        "Field": list(s.keys()), 
+        "Field": list(s.keys()),
         "Value": [str(v) for v in s.values()]
     })
 
