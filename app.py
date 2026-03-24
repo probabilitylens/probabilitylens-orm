@@ -66,7 +66,7 @@ def evaluate_fsm(state):
         decision = "ADD"
 
     else:
-        decision = "NONE"
+        decision = "WAIT"   # ← upgraded wording
 
     conditions = [
         state["edge_score"] == 2,
@@ -99,9 +99,9 @@ def evaluate_fsm(state):
     if decision_score < 0.4:
         status = "PREPARATION"
     elif decision_score < 0.7:
-        status = "NEAR"
+        status = "DEVELOPING"
     elif decision_score < 1.0:
-        status = "TRIGGERING"
+        status = "NEAR TRIGGER"
     else:
         status = "ACTIONABLE"
 
@@ -123,9 +123,9 @@ def interpret(decision, score):
         return "Risk increasing — consider reducing exposure."
     if decision == "EXIT":
         return "Market structure invalid — exit positions."
-    if decision == "NONE" and score >= 0.7:
+    if decision == "WAIT" and score >= 0.7:
         return "Close to actionable — waiting for final confirmation."
-    return "No clear opportunity — monitoring."
+    return "Conditions not yet aligned — remain patient."
 
 
 # ── MARKET BIAS ──────────────────────────────────────────
@@ -220,8 +220,10 @@ with center:
         result = st.session_state.result
         decision = result["decision"]
         score = result["decision_score"]
+        status = result["transition_status"]
 
         st.markdown(f"### {market_bias(result['state'])}")
+        st.markdown(f"**Market Regime:** {status}")
 
         if decision == "ADD":
             st.success(f"Decision: {decision}")
