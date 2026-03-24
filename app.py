@@ -83,6 +83,40 @@ def _interpret(decision: str, score: float) -> str:
     if decision == "NONE" and score >= 0.7:
         return "High readiness — conditions largely in place, waiting for final strengthening."
     return "Insufficient signal — no action warranted."
+
+return "Insufficient signal — no action warranted."
+
+def _explain(state: dict, decision: str) -> list:
+    reasons = []
+
+    if decision == "ADD":
+        if state["edge_score"] == 2:
+            reasons.append("Strong edge identified")
+        if state["timing_score"] == 1:
+            reasons.append("Timing conditions favorable")
+        if state["confirmation_score"] == 1:
+            reasons.append("Market confirmation present")
+        if state["network_score"] >= 0.5:
+            reasons.append("Cross-market alignment supportive")
+        if state["reflex_score"] < 0.8:
+            reasons.append("No overcrowding / reflex risk")
+        if state["health"] >= 0.6:
+            reasons.append("System health stable")
+
+    elif decision == "REDUCE":
+        if state["reflex_score"] >= 0.8:
+            reasons.append("Crowded positioning / reflex risk elevated")
+        if state["health"] < 0.6:
+            reasons.append("System health deteriorating")
+
+    elif decision == "EXIT":
+        reasons.append("Insufficient propagation (<50)")
+
+    else:
+        reasons.append("Conditions not sufficient for action")
+
+    return reasons
+
 def _load_preset(preset: str):
     if preset == "Bullish Supply Shock":
         return dict(edge_score=2, timing_score=1, confirmation_score=1,
