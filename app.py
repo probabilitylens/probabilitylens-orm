@@ -6,7 +6,7 @@ import streamlit as st
 st.set_page_config(layout="wide")
 
 # =========================
-# HERO SECTION
+# HERO
 # =========================
 col_logo, col_title = st.columns([1, 4])
 
@@ -14,7 +14,7 @@ with col_logo:
     try:
         st.image("logo.png", width=140)
     except:
-        pass
+        pass  # prevents crash if logo missing
 
 with col_title:
     st.title("Oil Risk Monitor")
@@ -53,7 +53,6 @@ with left:
     st.subheader("Scenario")
 
     preset = st.selectbox("Preset Market Scenario", list(SCENARIOS.keys()))
-
     default = SCENARIOS[preset] or {}
 
     edge = st.selectbox("Signal Strength", [0, 1, 2], index=default.get("edge", 0))
@@ -83,25 +82,30 @@ def compute():
         min(capital * 2, 1) * 0.05
     )
 
-    # Regime
     if score < 0.5:
         regime = "PREPARATION"
         decision = "NONE"
-        text = "No clear opportunity — monitoring."
     elif score < 0.7:
         regime = "DEVELOPING"
         decision = "WAIT"
-        text = "Setup incomplete — no edge to act."
     elif score < 0.85:
         regime = "NEAR TRIGGER"
         decision = "WAIT"
-        text = "Close to actionable — waiting for confirmation."
     else:
         regime = "ACTIONABLE"
         decision = "ADD"
-        text = "Conditions aligned — opportunity actionable."
 
-    return score, regime, decision, text
+    return score, regime, decision
+
+def interpretation(regime):
+    if regime == "PREPARATION":
+        return "No edge present. Market conditions are not investable."
+    elif regime == "DEVELOPING":
+        return "Setup forming, but insufficient strength to act."
+    elif regime == "NEAR TRIGGER":
+        return "Conditions nearly aligned — awaiting confirmation."
+    else:
+        return "Conditions aligned — opportunity actionable."
 
 def constraints():
     issues = []
@@ -135,27 +139,23 @@ with center:
     if not evaluate:
         st.info("Select scenario and evaluate.")
     else:
-        score, regime, decision, text = compute()
+        score, regime, decision = compute()
 
         st.caption("System Output")
         st.markdown(f"### {regime}")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-
         st.caption("Readiness")
         st.metric("", f"{score*100:.1f}%")
 
-        # Decision box
+        # Decision
         if decision == "ADD":
-            st.success(decision)
+            st.success("ACTION: ADD")
         elif decision == "WAIT":
-            st.warning(decision)
-        elif decision == "REDUCE":
-            st.warning(decision)
+            st.warning("ACTION: WAIT")
         else:
-            st.info(decision)
+            st.info("ACTION: NO POSITION")
 
-        st.write(text)
+        st.write(interpretation(regime))
 
 # =========================
 # RIGHT PANEL (WHY NOT ADD)
@@ -167,16 +167,16 @@ with right:
         st.info("Run evaluation.")
     else:
         st.caption("Constraint Analysis")
-        st.write("Blocking conditions preventing action:")
+        st.write("Primary constraints blocking deployment:")
 
         issues = constraints()
 
         if not issues:
-            st.success("No constraints — ADD conditions satisfied.")
+            st.success("No constraints — conditions satisfied.")
         else:
             for i, issue in enumerate(issues):
                 if i == 0:
-                    st.error(issue)
+                    st.error(f"PRIMARY: {issue}")
                 else:
                     st.warning(issue)
 
@@ -191,7 +191,7 @@ st.divider()
 st.subheader("How to Use")
 
 st.markdown("""
-- Select a market scenario or input your own view  
+- Select a scenario or input your own view  
 - Click **Evaluate**  
 - Review:
   - Market regime  
