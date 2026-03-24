@@ -1,245 +1,277 @@
-import streamlit as st 
+import streamlit as st
 
-# =========================
+# -----------------------------
 # PAGE CONFIG
-# =========================
-st.set_page_config(layout="wide")
+# -----------------------------
+st.set_page_config(
+    page_title="ProbabilityLens — Oil Risk Monitor",
+    layout="wide"
+)
 
-# =========================
-# HERO
-# =========================
-col_logo, col_title = st.columns([1, 4])
+# -----------------------------
+# LOGO (SAFE LOAD)
+# -----------------------------
+try:
+    st.image("logo.png", width=180)
+except:
+    pass
 
-with col_logo:
-    try:
-        st.image("logo.png", width=140)
-    except:
-        pass  # prevents crash if logo missing
-
-with col_title:
-    st.title("Oil Risk Monitor")
-    st.caption("Deterministic Macro Decision Engine for Oil Markets")
+# -----------------------------
+# HERO SECTION
+# -----------------------------
+st.title("ProbabilityLens — Oil Risk Monitor")
 
 st.markdown("""
-Transforms macro conditions into **structured, rule-based trading decisions**.
+**A deterministic macro framework that tells you when to take risk — and when to stay out.**
 
-This system does **not predict prices** — it identifies when conditions justify action.
-
-**Designed for disciplined decision-making under uncertainty.**
+Built to eliminate premature positioning and enforce disciplined timing in oil markets.
 """)
 
-st.divider()
+st.markdown("---")
 
-# =========================
-# SCENARIOS
-# =========================
-SCENARIOS = {
-    "Manual": None,
-    "Bullish Supply Shock": dict(edge=2, timing=1, confirm=1, network=0.7, reflex=0.3, health=0.8),
-    "Demand Collapse": dict(edge=2, timing=1, confirm=1, network=0.6, reflex=0.2, health=0.7),
-    "Geopolitical Risk": dict(edge=1, timing=1, confirm=0, network=0.4, reflex=0.6, health=0.7),
-    "Late Cycle": dict(edge=1, timing=0, confirm=0, network=0.3, reflex=0.85, health=0.5),
-}
+# -----------------------------
+# VALUE STRIP
+# -----------------------------
+col1, col2, col3 = st.columns(3)
 
-# =========================
-# LAYOUT
-# =========================
+with col1:
+    st.markdown("**Deterministic, Not Predictive**  \nNo forecasts. Only condition-based decisions.")
+
+with col2:
+    st.markdown("**Timing Over Opinion**  \nAct only when alignment is real.")
+
+with col3:
+    st.markdown("**Risk First**  \nDefault state is **NO POSITION** unless proven otherwise.")
+
+st.markdown("---")
+
+# -----------------------------
+# SCORING FUNCTION
+# -----------------------------
+def compute_score(signal, timing, confirmation, alignment, crowding, health, capital):
+    weights = [0.2, 0.2, 0.15, 0.15, 0.1, 0.1, 0.1]
+    values = [signal, timing, confirmation, alignment, crowding, health, capital]
+    return sum(w * v for w, v in zip(weights, values))
+
+# -----------------------------
+# LAYOUT (3 COLUMNS)
+# -----------------------------
 left, center, right = st.columns([1, 1.2, 1])
 
-# =========================
-# LEFT PANEL (INPUTS)
-# =========================
+# -----------------------------
+# LEFT PANEL — SCENARIO
+# -----------------------------
 with left:
-    st.subheader("Scenario")
+    st.subheader("SCENARIO SETUP")
+    st.caption("Define current macro conditions to evaluate readiness.")
 
-    preset = st.selectbox("Preset Market Scenario", list(SCENARIOS.keys()))
-    default = SCENARIOS[preset] or {}
-
-    edge = st.selectbox("Signal Strength", [0, 1, 2], index=default.get("edge", 0))
-    timing = st.selectbox("Timing Trigger", [0, 1], index=default.get("timing", 0))
-    confirm = st.selectbox("Market Confirmation", [0, 1], index=default.get("confirm", 0))
-
-    network = st.slider("Cross-Market Alignment", 0.0, 1.0, float(default.get("network", 0.5)))
-    reflex = st.slider("Crowding / Reflexivity", 0.0, 1.0, float(default.get("reflex", 0.3)))
-    health = st.slider("Market Health", 0.0, 1.0, float(default.get("health", 0.75)))
-
-    max_prop = st.slider("Portfolio Utilisation", 0.0, 100.0, 75.0)
-    capital = st.number_input("Available Capital", value=0.05)
-
-    evaluate = st.button("Evaluate")
-
-# =========================
-# ENGINE
-# =========================
-def compute():
-    score = (
-        edge * 0.25 +
-        timing * 0.2 +
-        confirm * 0.2 +
-        network * 0.1 +
-        (1 - reflex) * 0.1 +
-        health * 0.1 +
-        min(capital * 2, 1) * 0.05
+    preset = st.selectbox(
+        "Macro Regime Presets",
+        ["Custom", "Weak Macro", "Neutral", "Bullish Setup"]
     )
 
-    if score < 0.5:
-        regime = "PREPARATION"
-        decision = "NONE"
-    elif score < 0.7:
-        regime = "DEVELOPING"
-        decision = "WAIT"
-    elif score < 0.85:
-        regime = "NEAR TRIGGER"
-        decision = "WAIT"
+    if preset == "Weak Macro":
+        signal = 0.2
+        timing = 0.1
+        confirmation = 0.2
+        alignment = 0.2
+        crowding = 0.3
+        health = 0.4
+        capital = 0.3
+    elif preset == "Neutral":
+        signal = 0.5
+        timing = 0.4
+        confirmation = 0.5
+        alignment = 0.5
+        crowding = 0.5
+        health = 0.5
+        capital = 0.5
+    elif preset == "Bullish Setup":
+        signal = 0.8
+        timing = 0.7
+        confirmation = 0.8
+        alignment = 0.75
+        crowding = 0.6
+        health = 0.7
+        capital = 0.8
     else:
-        regime = "ACTIONABLE"
-        decision = "ADD"
+        st.markdown("**Adjust Conditions**")
+        signal = st.slider("Signal Strength", 0.0, 1.0, 0.3)
+        timing = st.slider("Timing Trigger", 0.0, 1.0, 0.2)
+        confirmation = st.slider("Market Confirmation", 0.0, 1.0, 0.3)
+        alignment = st.slider("Cross-Market Alignment", 0.0, 1.0, 0.3)
+        crowding = st.slider("Crowding / Positioning", 0.0, 1.0, 0.4)
+        health = st.slider("Market Health", 0.0, 1.0, 0.5)
+        capital = st.slider("Capital Availability", 0.0, 1.0, 0.4)
 
-    return score, regime, decision
+# -----------------------------
+# COMPUTE SCORE
+# -----------------------------
+score = compute_score(signal, timing, confirmation, alignment, crowding, health, capital)
 
-def interpretation(regime):
-    if regime == "PREPARATION":
-        return "No edge present. Market conditions are not investable."
-    elif regime == "DEVELOPING":
-        return "Setup forming, but insufficient strength to act."
-    elif regime == "NEAR TRIGGER":
-        return "Conditions nearly aligned — awaiting confirmation."
-    else:
-        return "Conditions aligned — opportunity actionable."
+# -----------------------------
+# REGIME + DECISION
+# -----------------------------
+if score < 0.5:
+    regime = "PREPARATION"
+    action = "NO POSITION"
+elif score < 0.7:
+    regime = "DEVELOPING"
+    action = "WAIT"
+elif score < 0.85:
+    regime = "NEAR TRIGGER"
+    action = "WAIT"
+else:
+    regime = "ACTIONABLE"
+    action = "ADD"
 
-def constraints():
-    issues = []
-
-    if edge < 2:
-        issues.append(f"Signal not strong ({edge} → strong required)")
-    if timing < 1:
-        issues.append("Timing not triggered")
-    if confirm < 1:
-        issues.append("Market confirmation missing")
-    if network < 0.5:
-        issues.append(f"Market alignment too weak ({network:.2f})")
-
-    return issues
-
-def next_trigger():
-    if edge < 2:
-        return "Strengthen signal to actionable level"
-    if confirm < 1:
-        return "Wait for confirmation signal"
-    if timing < 1:
-        return "Timing trigger activation"
-    return "Conditions aligned"
-
-# =========================
-# CENTER PANEL (OUTPUT)
-# =========================
+# -----------------------------
+# CENTER PANEL — OUTPUT
+# -----------------------------
 with center:
-    st.subheader("Decision")
+    st.subheader("DECISION ENGINE OUTPUT")
 
-    if not evaluate:
-        st.info("Select scenario and evaluate.")
+    st.markdown("### MARKET STATE")
+    st.markdown(f"**{regime}**")
+
+    st.markdown("### READINESS SCORE")
+    st.markdown(f"**{int(score * 100)}%**")
+    st.caption("Condition alignment toward actionable state")
+
+    st.markdown("### ACTION")
+    st.markdown(f"## {action}")
+
+    # Interpretation
+    st.markdown("### INTERPRETATION")
+
+    if action == "NO POSITION":
+        st.markdown("""
+Conditions are not aligned.  
+Risk of premature positioning is high.
+""")
+    elif action == "WAIT":
+        st.markdown("""
+Partial alignment detected.  
+Timing and confirmation are not yet sufficient.
+""")
     else:
-        score, regime, decision = compute()
-
-        st.caption("System Output")
-        st.markdown(f"### {regime}")
-
-        st.caption("Readiness")
-        st.metric("", f"{score*100:.1f}%")
-
-        # Decision
-        if decision == "ADD":
-            st.success("ACTION: ADD")
-        elif decision == "WAIT":
-            st.warning("ACTION: WAIT")
-        else:
-            st.info("ACTION: NO POSITION")
-
-        st.write(interpretation(regime))
-
-# =========================
-# RIGHT PANEL (WHY NOT ADD)
-# =========================
-with right:
-    st.subheader("Why NOT ADD")
-
-    if not evaluate:
-        st.info("Run evaluation.")
-    else:
-        st.caption("Constraint Analysis")
-        st.write("Primary constraints blocking deployment:")
-
-        issues = constraints()
-
-        if not issues:
-            st.success("No constraints — conditions satisfied.")
-        else:
-            for i, issue in enumerate(issues):
-                if i == 0:
-                    st.error(f"PRIMARY: {issue}")
-                else:
-                    st.warning(issue)
-
-        st.markdown("### Next Trigger")
-        st.markdown(f"**{next_trigger()}**")
-
-# =========================
-# HOW TO USE
-# =========================
-st.divider()
-
-st.subheader("How to Use")
-
-st.markdown("""
-- Select a scenario or input your own view  
-- Click **Evaluate**  
-- Review:
-  - Market regime  
-  - Readiness score  
-  - Decision  
-- Use constraint analysis to understand blockers  
-
-This system enforces **discipline, not prediction**.
+        st.markdown("""
+Conditions are aligned.  
+Risk-taking is supported by structure and confirmation.
 """)
 
-# =========================
-# ABOUT
-# =========================
-st.divider()
+# -----------------------------
+# RIGHT PANEL — CONSTRAINTS
+# -----------------------------
+with right:
+    st.subheader("WHY NOT ADD")
+    st.caption("Constraints preventing risk deployment")
 
-st.subheader("About / Methodology")
+    constraints = []
+
+    if signal < 0.6:
+        constraints.append("❌ No structural edge")
+    if timing < 0.6:
+        constraints.append("❌ Timing not activated")
+    if confirmation < 0.6:
+        constraints.append("❌ No market confirmation")
+    if alignment < 0.6:
+        constraints.append("❌ Cross-market misalignment")
+    if capital < 0.5:
+        constraints.append("❌ Weak capital flow support")
+
+    if constraints:
+        for c in constraints:
+            st.markdown(c)
+
+        st.markdown("---")
+        st.markdown("**Adding risk here would be undisciplined and premature.**")
+    else:
+        st.markdown("No major constraints detected.")
+
+# -----------------------------
+# NEXT TRIGGER
+# -----------------------------
+st.markdown("---")
+st.subheader("NEXT TRIGGER")
 
 st.markdown("""
-### Deterministic Decision Framework
+Risk becomes actionable when:
+- Signal strength reaches required threshold  
+- Timing trigger activates  
+- Market confirmation aligns  
 
-This system does not forecast markets.
+Until then, no action is justified.
+""")
 
-It determines:
+# -----------------------------
+# HOW TO USE
+# -----------------------------
+st.markdown("---")
+st.subheader("HOW TO USE")
 
-- When to act  
-- When to wait  
-- When to reduce risk  
+st.markdown("""
+1. Select a macro scenario or adjust conditions  
+2. Observe readiness score and market state  
+3. Follow the action output — not your bias  
+4. Use “Why Not Add” to understand constraints  
+5. Wait for alignment before deploying capital  
+""")
 
-### Core Inputs
+# -----------------------------
+# WHAT THIS TOOL DOES
+# -----------------------------
+st.markdown("---")
+st.subheader("WHAT THIS TOOL DOES")
+
+st.markdown("""
+- Translates macro conditions into structured decisions  
+- Enforces timing discipline  
+- Prevents premature entries  
+- Highlights when risk is justified  
+""")
+
+# -----------------------------
+# WHAT THIS TOOL DOES NOT DO
+# -----------------------------
+st.subheader("WHAT THIS TOOL DOES NOT DO")
+
+st.markdown("""
+- Does NOT predict prices  
+- Does NOT forecast direction  
+- Does NOT optimize entries  
+- Does NOT replace judgment  
+
+**It answers one question only:**  
+Are conditions aligned enough to take risk?
+""")
+
+# -----------------------------
+# METHODOLOGY
+# -----------------------------
+st.markdown("---")
+st.subheader("METHODOLOGY")
+
+st.markdown("""
+ProbabilityLens uses a deterministic scoring model based on:
 
 - Signal strength  
-- Timing trigger  
-- Confirmation  
+- Timing activation  
+- Market confirmation  
 - Cross-market alignment  
-- Crowding  
+- Positioning / crowding  
 - Market health  
 - Capital availability  
 
-### Regime Model
+Outputs are rule-based, not predictive.
+""")
 
-- Preparation  
-- Developing  
-- Near Trigger  
-- Actionable  
+# -----------------------------
+# FINAL STATEMENT
+# -----------------------------
+st.markdown("---")
+st.markdown("""
+**Most losses come from acting too early.**
 
-### Philosophy
-
-Markets reward discipline.
-
-**Act only when conditions justify it.**
+ProbabilityLens exists to prevent that.
 """)
