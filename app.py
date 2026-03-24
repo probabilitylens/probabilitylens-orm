@@ -1,7 +1,4 @@
 import streamlit as st
-import requests
-
-API_URL = "http://localhost:8000/probability-lens/evaluate"
 
 st.set_page_config(page_title="ProbabilityLens ORM", layout="wide")
 
@@ -10,25 +7,86 @@ st.caption("Deterministic Macro Decision Engine (FSM-based)")
 
 st.divider()
 
-# ── Defaults ─────────────────────────────────
-_DEFAULTS = {
-    "edge_score": 1,
-    "timing_score": 1,
-    "confirmation_score": 1,
-    "network_score": 0.50,
-    "reflex_score": 0.30,
-    "health": 0.75,
-    "max_prop": 75.0,
-    "portfolio_headroom": 0.05,
-}
+# ── FSM LOGIC ─────────────────────────────────────────────
 
-for k, v in _DEFAULTS.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+def evaluate_fsm(state):
+    # EXIT
+    if state["max_prop"] < 50:
+        decision = "EXIT"
+
+    # REDUCE
+    elif state["reflex_score"] >= 0.8 or state["health"] < 0.6:
+        decision = "REDUCE"
+
+    # ADD
+    elif (
+        state["edge_score"] == 2 and
+        state["timing_score"] == 1 and
+        state["confirmation_score"] == 1 and
+        state["network_score"] >= 0.5 and
+        state["reflex_score"] < 0.8 and
+        state["portfolio_headroom"] > 0 and
+        state["health"] >= 0.6
+    ):
+        decision = "ADD"
+
+    else:
+        decision = "NONE"
+
+    # Decision score (fraction of ADD conditions met)
+    conditions = [
+        state["edge_score"] == 2,
+        state["timing_score"] == 1,
+        state["confirmation_score"] == 1,
+        state["network_score"] >= 0.5,
+        state["reflex_score"] < 0.8,
+        state["portfolio_headroom"] > 0,
+        state["health"] >= 0.6
+    ]
+
+    decision_score = sum(conditions) / len(conditions)
+
+    # Missing conditions
+    missing = []
+    if state["edge_score"] != 2:
+        missing.append("edge_score != 2")
+    if state["timing_score"] != 1:
+        missing.append("timing_score != 1")
+    if state["confirmation_score"] != 1:
+        missing.append("confirmation_score != 1")
+    if state["network_score"] < 0.5:
+        missing.append("network_score < 0.5")
+    if state["reflex_score"] >= 0.8:
+        missing.append("reflex_score >= 0.8")
+    if state["portfolio_headroom"] <= 0:
+        missing.append("portfolio_headroom <= 0")
+    if state["health"] < 0.6:
+        missing.append("health < 0.6")
+
+    # Transition status
+    if decision_score < 0.4:
+        status = "PREPARATION"
+    elif decision_score < 0.7:
+        status = "NEAR"
+    elif decision_score < 1.0:
+        status = "TRIGGERING"
+    else:
+        status = "ACTIONABLE"
+
+    return {
+        "decision": decision,
+        "decision_score": decision_score,
+        "transition_status": status,
+        "trigger_gap": {
+            "missing_conditions": missing
+        },
+        "state": state
+    }
 
 
-# ── Interpretation ───────────────────────────
-def _interpret(decision: str, score: float) -> str:
+# ── INTERPRETATION ───────────────────────────────────────
+
+def interpret(decision, score):
     if decision == "ADD":
         return "Actionable — all conditions satisfied."
     if decision == "REDUCE":
@@ -40,8 +98,9 @@ def _interpret(decision: str, score: float) -> str:
     return "Insufficient signal — no action warranted."
 
 
-# ── Explanation ──────────────────────────────
-def _explain(state: dict, decision: str):
+# ── EXPLANATION ──────────────────────────────────────────
+
+def explain(state, decision):
     reasons = []
 
     if decision == "ADD":
@@ -73,11 +132,13 @@ def _explain(state: dict, decision: str):
     return reasons
 
 
-# ── Layout ───────────────────────────────────
+# ── LAYOUT ───────────────────────────────────────────────
+
 left, center, right = st.columns([1, 1.5, 1], gap="large")
 
 
-# ── Inputs ───────────────────────────────────
+# ── INPUTS ───────────────────────────────────────────────
+
 with left:
     st.subheader("Inputs")
 
@@ -94,31 +155,29 @@ with left:
     evaluate = st.button("Evaluate")
 
 
-# ── API Call ────────────────────────────────
+# ── RUN ENGINE ───────────────────────────────────────────
+
 if evaluate:
-    payload = {
-        "max_prop": max_prop,
+    state = {
         "edge_score": edge_score,
         "timing_score": timing_score,
         "confirmation_score": confirmation_score,
         "network_score": network_score,
         "reflex_score": reflex_score,
-        "portfolio_headroom": portfolio_headroom,
         "health": health,
+        "max_prop": max_prop,
+        "portfolio_headroom": portfolio_headroom,
     }
 
-    try:
-        res = requests.post(API_URL, json=payload).json()
-        st.session_state.result = res
-    except:
-        st.session_state.result = None
+    st.session_state.result = evaluate_fsm(state)
 
 
-# ── Output ───────────────────────────────────
+# ── OUTPUT ───────────────────────────────────────────────
+
 with center:
     st.subheader("Decision Output")
 
-    if "result" not in st.session_state or st.session_state.result is None:
+    if "result" not in st.session_state:
         st.info("Run evaluation.")
 
     else:
@@ -126,18 +185,27 @@ with center:
         decision = result["decision"]
         score = result["decision_score"]
 
-        st.success(f"Decision: {decision}")
+        # Decision
+        if decision == "ADD":
+            st.success(f"Decision: {decision}")
+        elif decision == "REDUCE":
+            st.warning(f"Decision: {decision}")
+        elif decision == "EXIT":
+            st.error(f"Decision: {decision}")
+        else:
+            st.info(f"Decision: {decision}")
+
         st.metric("Score", f"{score*100:.1f}%")
 
         st.divider()
 
         st.subheader("Interpretation")
-        st.write(_interpret(decision, score))
+        st.write(interpret(decision, score))
 
         st.divider()
 
         st.subheader("Why this decision")
-        reasons = _explain(result["state"], decision)
+        reasons = explain(result["state"], decision)
 
         for r in reasons:
             st.write(f"• {r}")
@@ -148,18 +216,20 @@ with center:
             st.write(result["state"])
 
 
-# ── Trigger Gap ─────────────────────────────
+# ── TRIGGER GAP ──────────────────────────────────────────
+
 with right:
     st.subheader("Trigger Gap")
 
-    if "result" not in st.session_state or st.session_state.result is None:
+    if "result" not in st.session_state:
         st.info("Run evaluation.")
 
     else:
         missing = result["trigger_gap"]["missing_conditions"]
 
         if not missing:
-            st.success("All conditions satisfied.")
+            st.success("All ADD conditions are satisfied.")
         else:
+            st.markdown(f"**{len(missing)} condition(s) blocking ADD:**")
             for m in missing:
                 st.error(m)
