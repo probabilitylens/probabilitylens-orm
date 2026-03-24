@@ -2,7 +2,7 @@ import streamlit as st
 
 st.set_page_config(page_title="ProbabilityLens ORM", layout="wide")
 
-# ── HERO HEADER (FIXED — PROFESSIONAL LAYOUT) ───────────
+# ── HEADER ──────────────────────────────────────────────
 
 col_logo, col_text = st.columns([1, 3])
 
@@ -10,20 +10,22 @@ with col_logo:
     st.image("logo.png", width=140)
 
 with col_text:
-    st.markdown("## Oil Risk Monitor")
-    st.caption("Deterministic Macro Decision Engine for Oil Markets")
+    st.markdown("<h2 style='margin-bottom:0;'>Oil Risk Monitor</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='margin-top:0; color:gray;'>Deterministic Macro Decision Engine for Oil Markets</p>", unsafe_allow_html=True)
 
 st.markdown(
 """
 Transforms macro conditions into **structured, rule-based trading decisions**.
 
 This system does **not predict prices** — it identifies when conditions justify action.
+
+**Designed for disciplined decision-making under uncertainty.**
 """
 )
 
 st.divider()
 
-# ── PRESET SCENARIOS ─────────────────────────────────────
+# ── PRESET SCENARIOS ────────────────────────────────────
 
 def load_preset(preset):
     if preset == "Bullish Supply Shock":
@@ -49,7 +51,7 @@ def load_preset(preset):
     return None
 
 
-# ── ENGINE ──────────────────────────────────────────────
+# ── ENGINE ─────────────────────────────────────────────
 
 def evaluate_fsm(state):
 
@@ -119,7 +121,7 @@ def evaluate_fsm(state):
     }
 
 
-# ── INTERPRETATION ──────────────────────────────────────
+# ── INTERPRETATION ─────────────────────────────────────
 
 def interpret(decision, score):
     if decision == "ADD":
@@ -133,23 +135,23 @@ def interpret(decision, score):
     return "Conditions not yet aligned — remain patient."
 
 
-# ── WHY NOT ADD ─────────────────────────────────────────
+# ── WHY NOT ADD ────────────────────────────────────────
 
 def explain_not_add(state, missing):
 
     mapping = {
-        "edge_score != 2": f"Opportunity not strong ({state['edge_score']} → strong required)",
-        "timing_score != 1": "Timing not aligned",
-        "confirmation_score != 1": "Confirmation missing",
-        "network_score < 0.5": f"Alignment too weak ({state['network_score']:.2f})",
-        "reflex_score >= 0.8": "Market overcrowded",
+        "edge_score != 2": f"Signal not strong ({state['edge_score']} → strong required)",
+        "timing_score != 1": "Timing not triggered",
+        "confirmation_score != 1": "Market confirmation missing",
+        "network_score < 0.5": f"Cross-market alignment too weak ({state['network_score']:.2f})",
+        "reflex_score >= 0.8": "Crowded positioning",
         "portfolio_headroom <= 0": "No capital available",
-        "health < 0.6": "Market conditions weak"
+        "health < 0.6": "Market conditions unstable"
     }
 
     trigger_map = {
-        "edge_score != 2": "Strengthen opportunity",
-        "timing_score != 1": "Wait for timing",
+        "edge_score != 2": "Strengthen signal",
+        "timing_score != 1": "Wait for timing trigger",
         "confirmation_score != 1": "Wait for confirmation",
         "network_score < 0.5": "Improve alignment",
         "reflex_score >= 0.8": "Reduce crowding",
@@ -163,7 +165,7 @@ def explain_not_add(state, missing):
     return explanations, next_trigger
 
 
-# ── MAIN LAYOUT ─────────────────────────────────────────
+# ── MAIN LAYOUT ────────────────────────────────────────
 
 left, center, right = st.columns([1,1.5,1], gap="large")
 
@@ -172,7 +174,7 @@ with left:
     st.subheader("Scenario")
 
     preset = st.selectbox(
-        "Preset",
+        "Preset Market Scenario",
         ["Manual", "Bullish Supply Shock", "Demand Collapse",
          "Geopolitical Risk Spike", "Late Cycle Exhaustion"]
     )
@@ -183,14 +185,14 @@ with left:
         state = preset_data
     else:
         state = {
-            "edge_score": st.selectbox("Opportunity Strength", [0,1,2]),
-            "timing_score": st.selectbox("Timing Alignment", [0,1]),
-            "confirmation_score": st.selectbox("Confirmation", [0,1]),
+            "edge_score": st.selectbox("Signal Strength", [0,1,2]),
+            "timing_score": st.selectbox("Timing Trigger", [0,1]),
+            "confirmation_score": st.selectbox("Market Confirmation", [0,1]),
             "network_score": st.slider("Cross-Market Alignment", 0.0,1.0,0.5),
-            "reflex_score": st.slider("Crowding", 0.0,1.0,0.3),
+            "reflex_score": st.slider("Crowding / Reflexivity", 0.0,1.0,0.3),
             "health": st.slider("Market Health", 0.0,1.0,0.75),
-            "max_prop": st.slider("Portfolio Used", 0.0,100.0,75.0),
-            "portfolio_headroom": st.number_input("Free Capital", 0.0,1.0,0.05),
+            "max_prop": st.slider("Portfolio Utilisation", 0.0,100.0,75.0),
+            "portfolio_headroom": st.number_input("Available Capital", 0.0,1.0,0.05),
         }
 
     run = st.button("Evaluate", use_container_width=True)
@@ -204,9 +206,10 @@ if run:
 # OUTPUT
 with center:
     st.subheader("Decision")
+    st.caption("System Output")
 
     if "result" not in st.session_state:
-        st.info("Select scenario and evaluate.")
+        st.info("No evaluation yet — select a scenario and click Evaluate.")
 
     else:
         r = st.session_state.result
@@ -229,9 +232,10 @@ with center:
 # WHY NOT ADD
 with right:
     st.subheader("Why NOT ADD")
+    st.caption("Constraint Analysis")
 
     if "result" not in st.session_state:
-        st.info("Run evaluation.")
+        st.info("Run evaluation to identify blocking conditions.")
 
     else:
         missing = st.session_state.result["missing"]
@@ -253,10 +257,9 @@ with right:
 
 st.divider()
 
-# ── HOW TO USE ──────────────────────────────────────────
+# ── HOW TO USE ─────────────────────────────────────────
 
 with st.expander("How to Use"):
-
     st.markdown(
     """
 1. Select a market scenario or input your own view  
@@ -264,40 +267,37 @@ with st.expander("How to Use"):
 3. Review:
    - Market regime  
    - Readiness score  
-   - Decision (ADD / WAIT / REDUCE / EXIT)  
-4. Use **Why NOT ADD** to understand what is missing  
+   - Decision  
+4. Use constraint analysis to understand blockers  
 
 ---
 
-This system enforces **discipline and timing**, not prediction.
+This system enforces **discipline, not prediction.**
     """
     )
 
 
-# ── ABOUT / METHODOLOGY ─────────────────────────────────
+# ── ABOUT ──────────────────────────────────────────────
 
 with st.expander("About / Methodology"):
-
     st.markdown(
     """
 ### Deterministic Decision Framework
 
-This system is **not predictive**.
+This system does not forecast.
 
-It defines:
+It determines:
 - When to act  
 - When to wait  
-- When to reduce or exit  
+- When to reduce risk  
 
 ---
 
-### Core Logic
+### Core Inputs
 
-7 conditions drive decisions:
-
-- Opportunity strength  
-- Timing alignment  
-- Market confirmation  
+- Signal strength  
+- Timing trigger  
+- Confirmation  
 - Cross-market alignment  
 - Crowding  
 - Market health  
@@ -307,19 +307,17 @@ It defines:
 
 ### Regime Model
 
-- **Preparation** → weak setup  
-- **Developing** → forming  
-- **Near Trigger** → close  
-- **Actionable** → aligned  
+- Preparation  
+- Developing  
+- Near Trigger  
+- Actionable  
 
 ---
 
 ### Philosophy
 
-Markets are not about prediction.
+Markets reward discipline.
 
-They are about:
-
-> Acting only when conditions justify it.
+> Act only when conditions justify it.
     """
     )
