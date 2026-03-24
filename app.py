@@ -309,8 +309,6 @@ with center:
 
         st.divider()
 
-st.divider()
-
 st.subheader("Why this decision")
 
 state = result["state"]
