@@ -320,7 +320,10 @@ for r in reasons:
  # State summary
  with st.expander("State details"):
     s = result["state"]
-    st.table({"Field": list(s.keys()), "Value": [str(v) for v in s.values()]})
+    st.table({
+        "Field": list(s.keys()), 
+        "Value": [str(v) for v in s.values()]
+    })
 
 # ── Right panel: trigger gap ──────────────────────────────────────────────────
 with right:
