@@ -1,31 +1,28 @@
 import streamlit as st
+from supabase import create_client
+
+# -----------------------------
+# SUPABASE CONFIG (PASTE YOURS HERE)
+# -----------------------------
+SUPABASE_URL = "https://kqayxhhvfqelwqsuxnwv.supabase.co"
+SUPABASE_KEY = "sb_publishable_d9cUMbsI7GNFEm4pgvYUww_Jh8ro__n"
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # -----------------------------
 # PAGE CONFIG
 # -----------------------------
-st.set_page_config(page_title="ProbabilityLens Terminal", layout="wide")
+st.set_page_config(layout="wide", page_title="ProbabilityLens Terminal")
 
 # -----------------------------
-# GLOBAL STYLING (BLOOMBERG-STYLE)
+# UI STYLE (BLOOMBERG)
 # -----------------------------
 st.markdown("""
 <style>
-body {
-    background-color: #0e1117;
-    color: #e6e6e6;
-}
-.block-container {
-    padding-top: 1.5rem;
-}
-h1, h2, h3 {
-    color: #ffffff;
-}
-.metric-box {
-    background-color: #1a1f2b;
-    padding: 15px;
-    border-radius: 10px;
-    margin-bottom: 10px;
-}
+body { background-color:#0b0f14; color:#e6e6e6; }
+.block-container { padding-top:1rem; }
+.metric { font-size:32px; font-weight:bold; }
+.panel { background:#141a23; padding:15px; border-radius:8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -38,51 +35,97 @@ except:
     pass
 
 # -----------------------------
+# AUTH STATE
+# -----------------------------
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+# -----------------------------
+# LOGIN FUNCTIONS
+# -----------------------------
+def login(email, password):
+    try:
+        res = supabase.auth.sign_in_with_password({
+            "email": email,
+            "password": password
+        })
+        st.session_state.user = res.user
+    except:
+        st.error("Login failed")
+
+def signup(email, password):
+    try:
+        supabase.auth.sign_up({
+            "email": email,
+            "password": password
+        })
+        st.success("Account created. Now login.")
+    except:
+        st.error("Signup failed")
+
+# -----------------------------
+# LOGIN SCREEN
+# -----------------------------
+if not st.session_state.user:
+    st.title("ProbabilityLens")
+
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
+
+    with tab1:
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            login(email, password)
+
+    with tab2:
+        email = st.text_input("New Email")
+        password = st.text_input("New Password", type="password")
+        if st.button("Create Account"):
+            signup(email, password)
+
+    st.stop()
+
+# -----------------------------
 # HEADER
 # -----------------------------
 st.title("ProbabilityLens Terminal")
 st.caption("Deterministic Macro Risk Engine — Oil Markets")
 
-st.markdown("---")
-
 # -----------------------------
 # DEMO MODE
 # -----------------------------
-st.sidebar.header("DEMO MODE")
-demo = st.sidebar.selectbox("Scenario Storytelling", [
+mode = st.sidebar.selectbox("Scenario Mode", [
     "Manual",
-    "Early Weak Macro",
-    "Transition Phase",
-    "Pre-Breakout Setup",
-    "Full Alignment"
+    "Weak",
+    "Neutral",
+    "Strong"
 ])
 
 # -----------------------------
-# DEFAULT VALUES
+# INPUTS
 # -----------------------------
-if demo == "Early Weak Macro":
-    signal, timing, confirmation, alignment, crowding, health, capital = 0.2, 0.1, 0.2, 0.2, 0.6, 0.4, 0.3
-elif demo == "Transition Phase":
-    signal, timing, confirmation, alignment, crowding, health, capital = 0.5, 0.4, 0.5, 0.5, 0.5, 0.5, 0.5
-elif demo == "Pre-Breakout Setup":
-    signal, timing, confirmation, alignment, crowding, health, capital = 0.7, 0.65, 0.7, 0.7, 0.5, 0.6, 0.7
-elif demo == "Full Alignment":
-    signal, timing, confirmation, alignment, crowding, health, capital = 0.9, 0.9, 0.9, 0.85, 0.4, 0.8, 0.9
+if mode == "Weak":
+    signal, timing, conf, align, crowd, health, capital = 0.2,0.1,0.2,0.2,0.6,0.4,0.3
+elif mode == "Neutral":
+    signal, timing, conf, align, crowd, health, capital = 0.5,0.4,0.5,0.5,0.5,0.5,0.5
+elif mode == "Strong":
+    signal, timing, conf, align, crowd, health, capital = 0.9,0.9,0.9,0.8,0.4,0.8,0.9
 else:
     signal = st.sidebar.slider("Signal", 0.0, 1.0, 0.3)
     timing = st.sidebar.slider("Timing", 0.0, 1.0, 0.3)
-    confirmation = st.sidebar.slider("Confirmation", 0.0, 1.0, 0.3)
-    alignment = st.sidebar.slider("Alignment", 0.0, 1.0, 0.3)
-    crowding = st.sidebar.slider("Crowding", 0.0, 1.0, 0.5)
+    conf = st.sidebar.slider("Confirmation", 0.0, 1.0, 0.3)
+    align = st.sidebar.slider("Alignment", 0.0, 1.0, 0.3)
+    crowd = st.sidebar.slider("Crowding", 0.0, 1.0, 0.5)
     health = st.sidebar.slider("Health", 0.0, 1.0, 0.5)
     capital = st.sidebar.slider("Capital", 0.0, 1.0, 0.5)
 
 # -----------------------------
-# SCORING
+# SCORE
 # -----------------------------
 score = (
-    signal*0.2 + timing*0.2 + confirmation*0.15 + alignment*0.15 +
-    (1-crowding)*0.1 + health*0.1 + capital*0.1
+    signal*0.2 + timing*0.2 + conf*0.15 +
+    align*0.15 + (1-crowd)*0.1 +
+    health*0.1 + capital*0.1
 )
 
 # -----------------------------
@@ -98,88 +141,55 @@ else:
     regime, action, color = "ACTIONABLE", "ADD", "green"
 
 # -----------------------------
-# MAIN GRID
+# LAYOUT
 # -----------------------------
-col1, col2, col3 = st.columns([1,1.2,1])
+c1, c2, c3 = st.columns([1,1.2,1])
 
-# -----------------------------
-# LEFT — INPUT SUMMARY
-# -----------------------------
-with col1:
-    st.subheader("INPUT STATE")
-    st.markdown(f"Signal: {round(signal,2)}")
-    st.markdown(f"Timing: {round(timing,2)}")
-    st.markdown(f"Confirmation: {round(confirmation,2)}")
-    st.markdown(f"Alignment: {round(alignment,2)}")
-    st.markdown(f"Crowding: {round(crowding,2)}")
-    st.markdown(f"Health: {round(health,2)}")
-    st.markdown(f"Capital: {round(capital,2)}")
+with c1:
+    st.markdown("### INPUT STATE")
+    st.markdown(f"<div class='panel'>Signal: {signal}<br>Timing: {timing}<br>Confirmation: {conf}</div>", unsafe_allow_html=True)
 
-# -----------------------------
-# CENTER — TERMINAL OUTPUT
-# -----------------------------
-with col2:
-    st.subheader("TERMINAL OUTPUT")
+with c2:
+    st.markdown("### TERMINAL OUTPUT")
+    st.markdown(f"<div class='panel'>\
+    <div>STATE</div><div class='metric'>{regime}</div>\
+    <div>READINESS</div><div class='metric'>{int(score*100)}%</div>\
+    <div>ACTION</div><div class='metric' style='color:{color}'>{action}</div>\
+    </div>", unsafe_allow_html=True)
 
-    st.markdown(f"### MARKET STATE\n**{regime}**")
+with c3:
+    st.markdown("### CONSTRAINTS")
+    cons = []
+    if signal < 0.6: cons.append("No edge")
+    if timing < 0.6: cons.append("No timing")
+    if conf < 0.6: cons.append("No confirmation")
 
-    st.markdown(f"### READINESS\n# {int(score*100)}%")
-
-    st.markdown("### ACTION")
-    st.markdown(f"<h2 style='color:{color}'>{action}</h2>", unsafe_allow_html=True)
-
-    if action == "NO POSITION":
-        st.info("Capital preservation mode")
-    elif action == "WAIT":
-        st.warning("Monitoring — no trigger yet")
-    else:
-        st.success("Conditions aligned — deploy risk")
+    for c in cons:
+        st.markdown(f"- {c}")
 
 # -----------------------------
-# RIGHT — CONSTRAINTS
+# SAVE
 # -----------------------------
-with col3:
-    st.subheader("CONSTRAINTS")
-
-    constraints = []
-
-    if signal < 0.6:
-        constraints.append("No structural edge")
-    if timing < 0.6:
-        constraints.append("Timing inactive")
-    if confirmation < 0.6:
-        constraints.append("No confirmation")
-    if alignment < 0.6:
-        constraints.append("Misalignment")
-
-    if constraints:
-        for c in constraints:
-            st.markdown(f"- {c}")
-        st.error("Undisciplined to add risk")
-    else:
-        st.success("No constraints")
-
-# -----------------------------
-# SAVE SCENARIO (SIMPLE SaaS BASE)
-# -----------------------------
-st.markdown("---")
-st.subheader("SCENARIO STORAGE")
-
-if "saved" not in st.session_state:
-    st.session_state.saved = []
-
-if st.button("Save Current Scenario"):
-    st.session_state.saved.append({
-        "score": round(score,2),
+if st.button("Save Scenario"):
+    supabase.table("scenarios").insert({
+        "user_email": st.session_state.user.email,
+        "score": score,
         "regime": regime,
         "action": action
-    })
+    }).execute()
+    st.success("Saved")
 
-for i, s in enumerate(st.session_state.saved):
-    st.markdown(f"Scenario {i+1}: {s}")
+# -----------------------------
+# HISTORY
+# -----------------------------
+st.markdown("---")
+data = supabase.table("scenarios").select("*").execute()
+
+for r in data.data:
+    st.write(r)
 
 # -----------------------------
 # FOOTER
 # -----------------------------
 st.markdown("---")
-st.caption("ProbabilityLens — Institutional Risk Discipline Engine")
+st.caption("ProbabilityLens — Risk Discipline Engine")
