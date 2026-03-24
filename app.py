@@ -2,7 +2,7 @@ import streamlit as st
 
 st.set_page_config(page_title="ProbabilityLens ORM", layout="wide")
 
-# ── HEADER / BRANDING ─────────────────────────────────────
+# ── HEADER ───────────────────────────────────────────────
 
 st.title("ProbabilityLens — Oil Risk Monitor")
 st.caption("Deterministic Macro Decision Engine for Oil Markets")
@@ -10,10 +10,11 @@ st.caption("Deterministic Macro Decision Engine for Oil Markets")
 st.markdown(
 """
 **What this does:**  
-Transforms macro conditions into **structured trading decisions**  
-using a fully deterministic rule-based system.
+Transforms macro conditions into structured trading decisions using a deterministic rule-based system.
 """
 )
+
+st.info("This system does not predict prices — it identifies when conditions justify action.")
 
 st.divider()
 
@@ -141,7 +142,7 @@ def market_bias(state):
 
 def explain_not_add(state, missing):
 
-    mapping = {
+    explanation_map = {
         "edge_score != 2": f"Opportunity not strong ({state['edge_score']} → strong required)",
         "timing_score != 1": "Timing not aligned",
         "confirmation_score != 1": "Confirmation missing",
@@ -151,8 +152,18 @@ def explain_not_add(state, missing):
         "health < 0.6": "Market conditions weak",
     }
 
-    explanations = [mapping[m] for m in missing]
-    next_trigger = explanations[0] if explanations else "All conditions satisfied"
+    trigger_map = {
+        "edge_score != 2": "Strengthen opportunity to strong level",
+        "timing_score != 1": "Wait for timing alignment",
+        "confirmation_score != 1": "Wait for confirmation signal",
+        "network_score < 0.5": "Increase cross-market alignment",
+        "reflex_score >= 0.8": "Reduce market crowding",
+        "portfolio_headroom <= 0": "Free up capital",
+        "health < 0.6": "Wait for market conditions to improve",
+    }
+
+    explanations = [explanation_map[m] for m in missing]
+    next_trigger = trigger_map.get(missing[0], explanations[0])
 
     return explanations, next_trigger
 
@@ -221,7 +232,7 @@ with center:
         else:
             st.info(f"Decision: {decision}")
 
-        st.metric("Confidence", f"{score*100:.1f}%")
+        st.metric("Readiness", f"{score*100:.1f}%")
 
         st.divider()
 
