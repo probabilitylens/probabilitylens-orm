@@ -25,7 +25,7 @@ This system does **not predict prices** — it identifies when conditions justif
 
 st.divider()
 
-# ── PRESET SCENARIOS ────────────────────────────────────
+# ── PRESETS ─────────────────────────────────────────────
 
 def load_preset(preset):
     if preset == "Bullish Supply Shock":
@@ -125,14 +125,14 @@ def evaluate_fsm(state):
 
 def interpret(decision, score):
     if decision == "ADD":
-        return "Conditions aligned — increase exposure."
+        return "All conditions aligned — risk/reward favorable."
     if decision == "REDUCE":
-        return "Risk rising — reduce exposure."
+        return "Risk asymmetry increasing — exposure should be reduced."
     if decision == "EXIT":
-        return "Invalid structure — exit positions."
+        return "Structural breakdown — position no longer justified."
     if score >= 0.7:
-        return "Close to actionable — awaiting confirmation."
-    return "Conditions not yet aligned — remain patient."
+        return "High readiness — awaiting final confirmation."
+    return "Setup incomplete — no edge to act."
 
 
 # ── WHY NOT ADD ────────────────────────────────────────
@@ -150,10 +150,10 @@ def explain_not_add(state, missing):
     }
 
     trigger_map = {
-        "edge_score != 2": "Strengthen signal",
+        "edge_score != 2": "Strengthen signal to actionable level",
         "timing_score != 1": "Wait for timing trigger",
         "confirmation_score != 1": "Wait for confirmation",
-        "network_score < 0.5": "Improve alignment",
+        "network_score < 0.5": "Improve cross-market alignment",
         "reflex_score >= 0.8": "Reduce crowding",
         "portfolio_headroom <= 0": "Free capital",
         "health < 0.6": "Wait for stability"
@@ -165,7 +165,7 @@ def explain_not_add(state, missing):
     return explanations, next_trigger
 
 
-# ── MAIN LAYOUT ────────────────────────────────────────
+# ── LAYOUT ─────────────────────────────────────────────
 
 left, center, right = st.columns([1,1.5,1], gap="large")
 
@@ -215,6 +215,8 @@ with center:
         r = st.session_state.result
 
         st.markdown(f"### {r['regime']}")
+        st.markdown("<br>", unsafe_allow_html=True)
+
         st.metric("Readiness", f"{r['score']*100:.1f}%")
 
         if r["decision"] == "ADD":
@@ -244,6 +246,8 @@ with right:
             st.success("All conditions satisfied")
 
         else:
+            st.markdown("**Blocking conditions preventing action:**")
+
             reasons, trigger = explain_not_add(
                 st.session_state.result["state"], missing
             )
