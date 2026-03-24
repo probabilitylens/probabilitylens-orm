@@ -3,7 +3,7 @@ import streamlit as st
 st.set_page_config(page_title="ProbabilityLens ORM", layout="wide")
 
 st.title("ProbabilityLens — Oil Risk Monitor")
-st.caption("Deterministic Macro Decision Engine (FSM-based)")
+st.caption("Deterministic Macro Decision Engine")
 
 st.divider()
 
@@ -81,34 +81,54 @@ def evaluate_fsm(state):
 
 def interpret(decision, score):
     if decision == "ADD":
-        return "Conditions aligned for position expansion."
+        return "Conditions aligned — opportunity to increase exposure."
     if decision == "REDUCE":
-        return "Risk increasing — reduce exposure."
+        return "Risk increasing — consider reducing exposure."
     if decision == "EXIT":
-        return "No valid environment — exit positions."
+        return "Market structure invalid — exit positions."
     if decision == "NONE" and score >= 0.7:
-        return "Close to actionable — waiting for final trigger."
-    return "Monitoring — no action."
+        return "Close to actionable — waiting for final confirmation."
+    return "No clear opportunity — monitoring."
+
+
+# ── MARKET BIAS ──────────────────────────────────────────
+
+def market_bias(state):
+    if state["edge_score"] == 2 and state["network_score"] >= 0.5:
+        return "Bullish Bias"
+    if state["health"] < 0.6 or state["reflex_score"] >= 0.8:
+        return "Bearish Risk"
+    return "Neutral"
 
 
 # ── EXPLANATION ──────────────────────────────────────────
 
 def explain(state, decision):
+
     if decision == "ADD":
-        return ["All ADD conditions satisfied"]
+        return ["All conditions aligned"]
 
     if decision == "REDUCE":
         reasons = []
         if state["reflex_score"] >= 0.8:
-            reasons.append("Reflex risk elevated")
+            reasons.append("Positioning is crowded")
         if state["health"] < 0.6:
-            reasons.append("Health deteriorating")
+            reasons.append("Market conditions deteriorating")
         return reasons
 
     if decision == "EXIT":
-        return ["Propagation insufficient (<50)"]
+        return ["Insufficient market propagation"]
 
-    return ["Conditions not sufficient for action"]
+    # NONE
+    reasons = []
+    if state["edge_score"] != 2:
+        reasons.append("Opportunity not strong")
+    if state["timing_score"] != 1:
+        reasons.append("Timing not aligned")
+    if state["confirmation_score"] != 1:
+        reasons.append("No confirmation signal")
+
+    return reasons
 
 
 # ── WHY NOT ADD ──────────────────────────────────────────
@@ -116,17 +136,16 @@ def explain(state, decision):
 def explain_not_add(state, missing):
 
     mapping = {
-        "edge_score != 2": f"Edge not strong ({state['edge_score']} → 2 required)",
-        "timing_score != 1": "Timing not active",
+        "edge_score != 2": f"Opportunity not strong ({state['edge_score']} → strong required)",
+        "timing_score != 1": "Timing not aligned",
         "confirmation_score != 1": "Confirmation missing",
-        "network_score < 0.5": f"Network too weak ({state['network_score']:.2f} < 0.50)",
-        "reflex_score >= 0.8": f"Reflex risk too high ({state['reflex_score']:.2f} ≥ 0.80)",
-        "portfolio_headroom <= 0": "No portfolio headroom",
-        "health < 0.6": f"Health too low ({state['health']:.2f} < 0.60)",
+        "network_score < 0.5": f"Market alignment too weak ({state['network_score']:.2f})",
+        "reflex_score >= 0.8": "Market overcrowded",
+        "portfolio_headroom <= 0": "No available capital",
+        "health < 0.6": "Market conditions weak",
     }
 
     explanations = [mapping[m] for m in missing]
-
     next_trigger = explanations[0] if explanations else "All conditions satisfied"
 
     return explanations, next_trigger
@@ -142,17 +161,17 @@ left, center, right = st.columns([1, 1.5, 1], gap="large")
 with left:
     st.subheader("Inputs")
 
-    edge_score = st.selectbox("edge_score", [0, 1, 2])
-    timing_score = st.selectbox("timing_score", [0, 1])
-    confirmation_score = st.selectbox("confirmation_score", [0, 1])
+    edge_score = st.selectbox("Opportunity Strength", [0, 1, 2])
+    timing_score = st.selectbox("Timing Alignment", [0, 1])
+    confirmation_score = st.selectbox("Market Confirmation", [0, 1])
 
-    network_score = st.slider("network_score", 0.0, 1.0, 0.5)
-    reflex_score = st.slider("reflex_score", 0.0, 1.0, 0.3)
-    health = st.slider("health", 0.0, 1.0, 0.75)
-    max_prop = st.slider("max_prop", 0.0, 100.0, 75.0)
-    portfolio_headroom = st.number_input("portfolio_headroom", 0.0, 1.0, 0.05)
+    network_score = st.slider("Cross-Market Alignment", 0.0, 1.0, 0.5)
+    reflex_score = st.slider("Crowding / Reflexivity", 0.0, 1.0, 0.3)
+    health = st.slider("Market Health", 0.0, 1.0, 0.75)
+    max_prop = st.slider("Portfolio Utilisation", 0.0, 100.0, 75.0)
+    portfolio_headroom = st.number_input("Available Capital", 0.0, 1.0, 0.05)
 
-    evaluate = st.button("Evaluate")
+    evaluate = st.button("Evaluate", use_container_width=True)
 
 
 # ── RUN ENGINE ───────────────────────────────────────────
@@ -185,6 +204,10 @@ with center:
         decision = result["decision"]
         score = result["decision_score"]
 
+        bias = market_bias(result["state"])
+
+        st.markdown(f"### {bias}")
+
         if decision == "ADD":
             st.success(f"Decision: {decision}")
         elif decision == "REDUCE":
@@ -194,7 +217,7 @@ with center:
         else:
             st.info(f"Decision: {decision}")
 
-        st.metric("Score", f"{score*100:.1f}%")
+        st.metric("Confidence", f"{score*100:.1f}%")
 
         st.divider()
 
@@ -203,13 +226,13 @@ with center:
 
         st.divider()
 
-        st.subheader("Why this decision")
+        st.subheader("Key Drivers")
         for r in explain(result["state"], decision):
             st.write(f"• {r}")
 
         st.divider()
 
-        with st.expander("State details"):
+        with st.expander("Detailed State"):
             st.write(result["state"])
 
 
@@ -226,12 +249,12 @@ with right:
         missing = result["trigger_gap"]["missing_conditions"]
 
         if not missing:
-            st.success("All ADD conditions satisfied.")
+            st.success("All conditions satisfied.")
 
         else:
             explanations, next_trigger = explain_not_add(result["state"], missing)
 
-            st.markdown("**ADD blocked because:**")
+            st.markdown("**Blocking factors:**")
             for e in explanations:
                 st.error(e)
 
