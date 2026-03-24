@@ -309,6 +309,16 @@ with center:
 
         st.divider()
 
+st.divider()
+
+st.subheader("Why this decision")
+
+state = result["state"]
+reasons = _explain(state, decision)
+
+for r in reasons:
+    st.write(f"• {r}")
+        
         # State summary
         with st.expander("State details"):
             s = result["state"]
