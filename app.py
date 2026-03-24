@@ -2,10 +2,46 @@ import streamlit as st
 
 st.set_page_config(page_title="ProbabilityLens ORM", layout="wide")
 
+# ── HEADER / BRANDING ─────────────────────────────────────
+
 st.title("ProbabilityLens — Oil Risk Monitor")
-st.caption("Deterministic Macro Decision Engine")
+st.caption("Deterministic Macro Decision Engine for Oil Markets")
+
+st.markdown(
+"""
+**What this does:**  
+Transforms macro conditions into **structured trading decisions**  
+using a fully deterministic rule-based system.
+"""
+)
 
 st.divider()
+
+# ── PRESET SCENARIOS ─────────────────────────────────────
+
+def load_preset(preset):
+    if preset == "Bullish Supply Shock":
+        return dict(edge_score=2, timing_score=1, confirmation_score=1,
+                    network_score=0.7, reflex_score=0.3, health=0.8,
+                    max_prop=80.0, portfolio_headroom=0.1)
+
+    if preset == "Demand Collapse":
+        return dict(edge_score=2, timing_score=1, confirmation_score=1,
+                    network_score=0.6, reflex_score=0.2, health=0.7,
+                    max_prop=75.0, portfolio_headroom=0.1)
+
+    if preset == "Geopolitical Risk Spike":
+        return dict(edge_score=1, timing_score=1, confirmation_score=0,
+                    network_score=0.4, reflex_score=0.6, health=0.7,
+                    max_prop=60.0, portfolio_headroom=0.05)
+
+    if preset == "Late Cycle Exhaustion":
+        return dict(edge_score=1, timing_score=0, confirmation_score=0,
+                    network_score=0.3, reflex_score=0.85, health=0.5,
+                    max_prop=55.0, portfolio_headroom=0.0)
+
+    return None
+
 
 # ── FSM ENGINE ───────────────────────────────────────────
 
@@ -101,36 +137,6 @@ def market_bias(state):
     return "Neutral"
 
 
-# ── EXPLANATION ──────────────────────────────────────────
-
-def explain(state, decision):
-
-    if decision == "ADD":
-        return ["All conditions aligned"]
-
-    if decision == "REDUCE":
-        reasons = []
-        if state["reflex_score"] >= 0.8:
-            reasons.append("Positioning is crowded")
-        if state["health"] < 0.6:
-            reasons.append("Market conditions deteriorating")
-        return reasons
-
-    if decision == "EXIT":
-        return ["Insufficient market propagation"]
-
-    # NONE
-    reasons = []
-    if state["edge_score"] != 2:
-        reasons.append("Opportunity not strong")
-    if state["timing_score"] != 1:
-        reasons.append("Timing not aligned")
-    if state["confirmation_score"] != 1:
-        reasons.append("No confirmation signal")
-
-    return reasons
-
-
 # ── WHY NOT ADD ──────────────────────────────────────────
 
 def explain_not_add(state, missing):
@@ -155,21 +161,32 @@ def explain_not_add(state, missing):
 
 left, center, right = st.columns([1, 1.5, 1], gap="large")
 
-
 # ── INPUTS ───────────────────────────────────────────────
 
 with left:
-    st.subheader("Inputs")
+    st.subheader("Scenario Setup")
 
-    edge_score = st.selectbox("Opportunity Strength", [0, 1, 2])
-    timing_score = st.selectbox("Timing Alignment", [0, 1])
-    confirmation_score = st.selectbox("Market Confirmation", [0, 1])
+    preset = st.selectbox(
+        "Preset Market Scenario",
+        ["Manual", "Bullish Supply Shock", "Demand Collapse",
+         "Geopolitical Risk Spike", "Late Cycle Exhaustion"]
+    )
 
-    network_score = st.slider("Cross-Market Alignment", 0.0, 1.0, 0.5)
-    reflex_score = st.slider("Crowding / Reflexivity", 0.0, 1.0, 0.3)
-    health = st.slider("Market Health", 0.0, 1.0, 0.75)
-    max_prop = st.slider("Portfolio Utilisation", 0.0, 100.0, 75.0)
-    portfolio_headroom = st.number_input("Available Capital", 0.0, 1.0, 0.05)
+    preset_values = load_preset(preset)
+
+    if preset_values:
+        state = preset_values
+    else:
+        state = {
+            "edge_score": st.selectbox("Opportunity Strength", [0, 1, 2]),
+            "timing_score": st.selectbox("Timing Alignment", [0, 1]),
+            "confirmation_score": st.selectbox("Market Confirmation", [0, 1]),
+            "network_score": st.slider("Cross-Market Alignment", 0.0, 1.0, 0.5),
+            "reflex_score": st.slider("Crowding / Reflexivity", 0.0, 1.0, 0.3),
+            "health": st.slider("Market Health", 0.0, 1.0, 0.75),
+            "max_prop": st.slider("Portfolio Utilisation", 0.0, 100.0, 75.0),
+            "portfolio_headroom": st.number_input("Available Capital", 0.0, 1.0, 0.05),
+        }
 
     evaluate = st.button("Evaluate", use_container_width=True)
 
@@ -177,17 +194,6 @@ with left:
 # ── RUN ENGINE ───────────────────────────────────────────
 
 if evaluate:
-    state = {
-        "edge_score": edge_score,
-        "timing_score": timing_score,
-        "confirmation_score": confirmation_score,
-        "network_score": network_score,
-        "reflex_score": reflex_score,
-        "health": health,
-        "max_prop": max_prop,
-        "portfolio_headroom": portfolio_headroom,
-    }
-
     st.session_state.result = evaluate_fsm(state)
 
 
@@ -197,16 +203,14 @@ with center:
     st.subheader("Decision Output")
 
     if "result" not in st.session_state:
-        st.info("Run evaluation.")
+        st.info("Select a scenario and click Evaluate.")
 
     else:
         result = st.session_state.result
         decision = result["decision"]
         score = result["decision_score"]
 
-        bias = market_bias(result["state"])
-
-        st.markdown(f"### {bias}")
+        st.markdown(f"### {market_bias(result['state'])}")
 
         if decision == "ADD":
             st.success(f"Decision: {decision}")
@@ -221,22 +225,10 @@ with center:
 
         st.divider()
 
-        st.subheader("Interpretation")
         st.write(interpret(decision, score))
 
-        st.divider()
 
-        st.subheader("Key Drivers")
-        for r in explain(result["state"], decision):
-            st.write(f"• {r}")
-
-        st.divider()
-
-        with st.expander("Detailed State"):
-            st.write(result["state"])
-
-
-# ── WHY NOT ADD PANEL ────────────────────────────────────
+# ── WHY NOT ADD ──────────────────────────────────────────
 
 with right:
     st.subheader("Why NOT ADD")
@@ -245,7 +237,6 @@ with right:
         st.info("Run evaluation.")
 
     else:
-        result = st.session_state.result
         missing = result["trigger_gap"]["missing_conditions"]
 
         if not missing:
