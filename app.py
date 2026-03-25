@@ -4,6 +4,10 @@ import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
 
+# PDF
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+
 st.set_page_config(layout="wide")
 
 # -----------------------------------
@@ -17,9 +21,6 @@ st.markdown("""
 [data-testid="stSidebar"] * {
     color: #cbd5f5 !important;
 }
-.stSlider > div > div {
-    color: #9ca3af !important;
-}
 .block-container {
     padding-top: 1.5rem;
     padding-left: 3rem;
@@ -29,25 +30,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------
-# HEADER (OPTION B LOGO FIX)
+# HEADER (FIXED)
 # -----------------------------------
 col_logo, col_title = st.columns([1, 6])
 
 with col_logo:
-    st.markdown(
-        """
-        <div style="
-            width:140px;
-            height:70px;
-            overflow:hidden;
-            display:flex;
-            align-items:center;
-        ">
-            <img src="logo.png" style="width:180px; margin-left:-20px;">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    st.image("logo.png", width=140)
 
 with col_title:
     st.markdown("### ProbabilityLens")
@@ -57,7 +45,7 @@ st.write(f"**LAST UPDATE:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
 st.divider()
 
 # -----------------------------------
-# SIDEBAR INPUTS
+# INPUTS
 # -----------------------------------
 st.sidebar.header("Input Parameters")
 
@@ -105,13 +93,10 @@ score_pct, regime, action = compute_decision(
 )
 
 # -----------------------------------
-# MAIN LAYOUT
+# OUTPUT
 # -----------------------------------
 col2, col3 = st.columns([1.7, 1.3])
 
-# -----------------------------------
-# SYSTEM OUTPUT
-# -----------------------------------
 with col2:
     st.subheader("SYSTEM OUTPUT")
 
@@ -124,58 +109,45 @@ with col2:
     st.caption("RECOMMENDED ACTION")
 
     if action == "NO POSITION":
-        st.error(f"⬛ {action}")
+        st.error(action)
     elif action == "WAIT":
-        st.warning(f"⏳ {action}")
+        st.warning(action)
     else:
-        st.success(f"▲ {action}")
+        st.success(action)
 
-    # Interpretation
     st.caption("SYSTEM INTERPRETATION")
 
     if action == "NO POSITION":
-        st.write("Conditions insufficient for risk deployment. Monitor for signal development.")
+        interpretation = "Conditions insufficient for risk deployment."
     elif action == "WAIT":
-        st.write("Setup is forming but lacks confirmation. Risk deployment premature.")
+        interpretation = "Setup forming. Await confirmation."
     else:
-        st.write("Conditions aligned. Incremental exposure warranted.")
+        interpretation = "Conditions aligned. Add exposure."
+
+    st.write(interpretation)
 
     # Rationale
     st.caption("DECISION RATIONALE")
 
-    drivers = []
-    risks = []
-
+    rationale = []
     if signal < 0.5:
-        drivers.append("Insufficient signal strength")
+        rationale.append("Weak signal strength")
     if timing < 0.5:
-        drivers.append("Timing not active")
+        rationale.append("Timing inactive")
     if confirmation < 0.5:
-        drivers.append("Lack of confirmation")
+        rationale.append("No confirmation")
     if alignment < 0.5:
-        drivers.append("Cross-market misalignment")
-
+        rationale.append("Cross-market misalignment")
     if crowding > 0.7:
-        risks.append("Crowded positioning increases reversal risk")
+        rationale.append("Crowded positioning risk")
 
-    if drivers:
-        st.write("**Key Limitations:**")
-        for d in drivers:
-            st.write(f"- {d}")
+    for r in rationale:
+        st.write(f"- {r}")
 
-    if risks:
-        st.write("**Risk Factors:**")
-        for r in risks:
-            st.write(f"- {r}")
-
-# -----------------------------------
-# CONSTRAINTS
-# -----------------------------------
 with col3:
     st.subheader("CONSTRAINTS")
 
     constraints = []
-
     if signal < 0.5:
         constraints.append("No structural edge")
     if timing < 0.5:
@@ -183,60 +155,58 @@ with col3:
     if confirmation < 0.5:
         constraints.append("No confirmation")
 
-    if constraints:
-        for c in constraints:
-            st.error(c)
-    else:
-        st.success("No constraints")
+    for c in constraints:
+        st.error(c)
 
 # -----------------------------------
-# REAL OIL DATA (WTI)
+# REAL OIL DATA
 # -----------------------------------
 st.divider()
 st.subheader("Oil Price Context + Signal Overlay")
 
-# Fetch real oil price (WTI)
 oil = yf.download("CL=F", period="3mo", interval="1d")
-
 oil = oil[['Close']].dropna()
 oil.rename(columns={"Close": "Oil Price"}, inplace=True)
 
-# Create signal overlay (scaled)
-oil["Signal"] = (signal * 100)
+# dynamic signal (NOT flat)
+oil["Signal"] = oil["Oil Price"].pct_change().rolling(5).mean()
+oil["Signal"] = oil["Signal"].fillna(0)
+
+# normalize
+oil["Signal"] = (oil["Signal"] - oil["Signal"].min()) / (
+    oil["Signal"].max() - oil["Signal"].min()
+)
+oil["Signal"] = oil["Signal"] * 100 * signal
 
 # -----------------------------------
-# BLOOMBERG-STYLE CHART (PLOTLY)
+# BLOOMBERG STYLE CHART
 # -----------------------------------
 fig = go.Figure()
 
-# Oil price
 fig.add_trace(go.Scatter(
     x=oil.index,
     y=oil["Oil Price"],
-    name="WTI Oil Price",
-    line=dict(width=2)
+    name="WTI Oil",
+    line=dict(width=2),
 ))
 
-# Signal overlay (secondary axis)
 fig.add_trace(go.Scatter(
     x=oil.index,
     y=oil["Signal"],
-    name="Signal Strength",
+    name="Signal",
     line=dict(dash="dot"),
     yaxis="y2"
 ))
 
 fig.update_layout(
     template="plotly_dark",
-    height=400,
-    margin=dict(l=10, r=10, t=30, b=10),
+    height=420,
     yaxis=dict(title="Oil Price"),
     yaxis2=dict(
-        title="Signal (%)",
+        title="Signal",
         overlaying="y",
         side="right"
     ),
-    legend=dict(orientation="h", y=1.02)
 )
 
 st.plotly_chart(fig, use_container_width=True)
@@ -248,52 +218,69 @@ st.divider()
 st.subheader("Scenario Comparison")
 
 scenarios = {
-    "Base Case": (signal, timing, confirmation, alignment, crowding, health, capital),
-    "Bull Case": (0.8, 0.8, 0.8, 0.8, 0.6, 0.7, 0.7),
-    "Stress Case": (0.2, 0.2, 0.2, 0.2, 0.7, 0.4, 0.4),
+    "Base": (signal, timing, confirmation, alignment, crowding, health, capital),
+    "Bull": (0.8, 0.8, 0.8, 0.8, 0.6, 0.7, 0.7),
+    "Stress": (0.2, 0.2, 0.2, 0.2, 0.7, 0.4, 0.4),
 }
 
-data = []
-
+rows = []
 for name, vals in scenarios.items():
     s, r, a = compute_decision(*vals)
-    data.append([name, s, r, a])
+    rows.append([name, s, r, a])
 
-df = pd.DataFrame(data, columns=["Scenario", "Score (%)", "Regime", "Action"])
+df = pd.DataFrame(rows, columns=["Scenario", "Score", "Regime", "Action"])
 st.dataframe(df, use_container_width=True, hide_index=True)
 
 # -----------------------------------
-# SCENARIO TIMELINE
+# TIMELINE
 # -----------------------------------
 st.divider()
 st.subheader("Scenario Timeline")
 
-timeline_inputs = [
-    ("T-3", 0.20, 0.20, 0.20, 0.20),
-    ("T-2", 0.30, 0.30, 0.30, 0.30),
-    ("T-1", 0.45, 0.50, 0.45, 0.50),
+timeline = [
+    ("T-3", 0.2, 0.2, 0.2, 0.2),
+    ("T-2", 0.3, 0.3, 0.3, 0.3),
+    ("T-1", 0.45, 0.5, 0.45, 0.5),
     ("Now", signal, timing, confirmation, alignment),
 ]
 
-timeline_data = []
+t_rows = []
+for t, s, ti, c, a in timeline:
+    sc, rg, ac = compute_decision(s, ti, c, a, crowding, health, capital)
+    t_rows.append([t, sc, rg, ac])
 
-for t, s, ti, c, a in timeline_inputs:
-    score_t, regime_t, action_t = compute_decision(
-        s, ti, c, a, crowding, health, capital
-    )
-    timeline_data.append([t, score_t, regime_t, action_t])
-
-timeline_df = pd.DataFrame(
-    timeline_data,
-    columns=["Time", "Score (%)", "Regime", "Action"]
-)
-
-st.dataframe(timeline_df, use_container_width=True, hide_index=True)
+t_df = pd.DataFrame(t_rows, columns=["Time", "Score", "Regime", "Action"])
+st.dataframe(t_df, use_container_width=True, hide_index=True)
 
 # -----------------------------------
-# FOOTER
+# PDF EXPORT
 # -----------------------------------
-st.divider()
+def generate_pdf():
+    doc = SimpleDocTemplate("/mnt/data/report.pdf")
+    styles = getSampleStyleSheet()
+    elements = []
 
-if st.button("Save Scenario"):
-    st.success("Scenario saved")
+    elements.append(Paragraph("ProbabilityLens Report", styles["Title"]))
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph(f"Regime: {regime}", styles["Normal"]))
+    elements.append(Paragraph(f"Score: {score_pct}%", styles["Normal"]))
+    elements.append(Paragraph(f"Action: {action}", styles["Normal"]))
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph("Interpretation:", styles["Heading3"]))
+    elements.append(Paragraph(interpretation, styles["Normal"]))
+
+    elements.append(Spacer(1, 12))
+    elements.append(Paragraph("Rationale:", styles["Heading3"]))
+
+    for r in rationale:
+        elements.append(Paragraph(f"- {r}", styles["Normal"]))
+
+    doc.build(elements)
+    return "/mnt/data/report.pdf"
+
+if st.button("Export Report (PDF)"):
+    file_path = generate_pdf()
+    with open(file_path, "rb") as f:
+        st.download_button("Download PDF", f, file_name="ProbabilityLens_Report.pdf")
