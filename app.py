@@ -1,11 +1,12 @@
 import streamlit as st
 from datetime import datetime
 import pandas as pd
+import numpy as np
 
 st.set_page_config(layout="wide")
 
 # -----------------------------------
-# STYLE (SAFE)
+# STYLE
 # -----------------------------------
 st.markdown("""
 <style>
@@ -29,13 +30,13 @@ st.markdown("""
 # -----------------------------------
 # HEADER
 # -----------------------------------
-col_logo, col_title = st.columns([2, 6])
+col_logo, col_title = st.columns([1.2, 6])
 
 with col_logo:
-    st.image("logo.png", width=160)
+    st.image("logo.png", width=140)
 
 with col_title:
-    st.title("ProbabilityLens")
+    st.markdown("### ProbabilityLens")
     st.caption("Deterministic Macro Risk Engine — Oil Markets")
 
 st.write(f"**LAST UPDATE:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
@@ -181,6 +182,26 @@ with col3:
         st.success("No constraints")
 
 # -----------------------------------
+# OIL PRICE CHART (SIMULATED OVERLAY)
+# -----------------------------------
+st.divider()
+st.subheader("Oil Price Context + Signal Overlay")
+
+# Simulated oil price data (replace later with real API)
+dates = pd.date_range(end=datetime.today(), periods=50)
+price = np.cumsum(np.random.normal(0.2, 1, 50)) + 70
+
+signal_series = np.linspace(0.2, signal, 50) * 100
+
+df_chart = pd.DataFrame({
+    "Date": dates,
+    "Oil Price": price,
+    "Signal Strength": signal_series
+}).set_index("Date")
+
+st.line_chart(df_chart)
+
+# -----------------------------------
 # SCENARIO COMPARISON
 # -----------------------------------
 st.divider()
@@ -202,22 +223,21 @@ df = pd.DataFrame(data, columns=["Scenario", "Score (%)", "Regime", "Action"])
 st.dataframe(df, use_container_width=True, hide_index=True)
 
 # -----------------------------------
-# SCENARIO TIMELINE (NEW)
+# SCENARIO TIMELINE
 # -----------------------------------
 st.divider()
 st.subheader("Scenario Timeline")
 
-# Simulated evolution (you can later connect to DB)
-timeline = [
-    ("T-3", 0.30, 0.30, 0.30, 0.30),
-    ("T-2", 0.40, 0.50, 0.40, 0.45),
-    ("T-1", 0.50, 0.60, 0.55, 0.60),
+timeline_inputs = [
+    ("T-3", 0.20, 0.20, 0.20, 0.20),
+    ("T-2", 0.30, 0.30, 0.30, 0.30),
+    ("T-1", 0.45, 0.50, 0.45, 0.50),
     ("Now", signal, timing, confirmation, alignment),
 ]
 
 timeline_data = []
 
-for t, s, ti, c, a in timeline:
+for t, s, ti, c, a in timeline_inputs:
     score_t, regime_t, action_t = compute_decision(
         s, ti, c, a, crowding, health, capital
     )
