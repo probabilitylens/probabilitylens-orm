@@ -5,42 +5,34 @@ import pandas as pd
 st.set_page_config(layout="wide")
 
 # -----------------------------------
-# STYLE (SAFE + MINIMAL)
+# STYLE (SAFE)
 # -----------------------------------
 st.markdown("""
 <style>
-
-/* Sidebar styling */
 [data-testid="stSidebar"] {
     background-color: #0f172a;
 }
-
 [data-testid="stSidebar"] * {
     color: #cbd5f5 !important;
 }
-
-/* Reduce slider intensity */
 .stSlider > div > div {
     color: #9ca3af !important;
 }
-
-/* Layout spacing */
 .block-container {
     padding-top: 1.5rem;
     padding-left: 3rem;
     padding-right: 3rem;
 }
-
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------
-# HEADER (FIXED LOGO HANDLING)
+# HEADER
 # -----------------------------------
 col_logo, col_title = st.columns([2, 6])
 
 with col_logo:
-    st.image("logo.png", width=180)  # ensure logo is properly cropped externally
+    st.image("logo.png", width=160)
 
 with col_title:
     st.title("ProbabilityLens")
@@ -50,7 +42,7 @@ st.write(f"**LAST UPDATE:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
 st.divider()
 
 # -----------------------------------
-# SIDEBAR INPUTS (ONLY SOURCE OF INPUTS)
+# SIDEBAR INPUTS
 # -----------------------------------
 st.sidebar.header("Input Parameters")
 
@@ -63,7 +55,7 @@ health = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital Availability", 0.0, 1.0, 0.5)
 
 # -----------------------------------
-# DECISION ENGINE
+# ENGINE
 # -----------------------------------
 def compute_decision(signal, timing, confirmation, alignment, crowding, health, capital):
     score = (
@@ -98,7 +90,7 @@ score_pct, regime, action = compute_decision(
 )
 
 # -----------------------------------
-# MAIN LAYOUT (NO DUPLICATION)
+# MAIN LAYOUT
 # -----------------------------------
 col2, col3 = st.columns([1.7, 1.3])
 
@@ -109,7 +101,7 @@ with col2:
     st.subheader("SYSTEM OUTPUT")
 
     st.caption("MARKET REGIME")
-    st.markdown(f"# {regime}")
+    st.markdown(f"## {regime}")
 
     st.caption("READINESS SCORE")
     st.markdown(f"# {score_pct}%")
@@ -117,47 +109,54 @@ with col2:
     st.caption("RECOMMENDED ACTION")
 
     if action == "NO POSITION":
-        st.error(action)
+        st.error(f"⬛ {action}")
     elif action == "WAIT":
-        st.warning(action)
+        st.warning(f"⏳ {action}")
     else:
-        st.success(action)
+        st.success(f"▲ {action}")
 
-    # -----------------------------------
-    # DECISION INTERPRETATION
-    # -----------------------------------
+    # Interpretation
     st.caption("SYSTEM INTERPRETATION")
 
     if action == "NO POSITION":
         st.write("Conditions insufficient for risk deployment. Monitor for signal development.")
     elif action == "WAIT":
-        st.write("Setup forming. Await confirmation before allocation.")
+        st.write("Setup is forming but lacks confirmation. Risk deployment premature.")
     else:
         st.write("Conditions aligned. Incremental exposure warranted.")
 
     # -----------------------------------
-    # DECISION RATIONALE BLOCK (NEW)
+    # DECISION RATIONALE
     # -----------------------------------
     st.caption("DECISION RATIONALE")
 
     drivers = []
+    risks = []
 
     if signal < 0.5:
-        drivers.append("Weak signal strength")
+        drivers.append("Insufficient signal strength")
     if timing < 0.5:
         drivers.append("Timing not active")
     if confirmation < 0.5:
         drivers.append("Lack of confirmation")
     if alignment < 0.5:
         drivers.append("Cross-market misalignment")
+
     if crowding > 0.7:
-        drivers.append("Crowded positioning risk")
+        risks.append("Crowded positioning increases reversal risk")
 
-    if not drivers:
-        drivers.append("All key conditions aligned")
+    if drivers:
+        st.write("**Key Limitations:**")
+        for d in drivers:
+            st.write(f"- {d}")
 
-    for d in drivers:
-        st.write(f"- {d}")
+    if risks:
+        st.write("**Risk Factors:**")
+        for r in risks:
+            st.write(f"- {r}")
+
+    if not drivers and not risks:
+        st.write("All key conditions aligned.")
 
 # -----------------------------------
 # CONSTRAINTS
@@ -200,8 +199,36 @@ for name, vals in scenarios.items():
     data.append([name, s, r, a])
 
 df = pd.DataFrame(data, columns=["Scenario", "Score (%)", "Regime", "Action"])
+st.dataframe(df, use_container_width=True, hide_index=True)
 
-st.table(df)
+# -----------------------------------
+# SCENARIO TIMELINE (NEW)
+# -----------------------------------
+st.divider()
+st.subheader("Scenario Timeline")
+
+# Simulated evolution (you can later connect to DB)
+timeline = [
+    ("T-3", 0.30, 0.30, 0.30, 0.30),
+    ("T-2", 0.40, 0.50, 0.40, 0.45),
+    ("T-1", 0.50, 0.60, 0.55, 0.60),
+    ("Now", signal, timing, confirmation, alignment),
+]
+
+timeline_data = []
+
+for t, s, ti, c, a in timeline:
+    score_t, regime_t, action_t = compute_decision(
+        s, ti, c, a, crowding, health, capital
+    )
+    timeline_data.append([t, score_t, regime_t, action_t])
+
+timeline_df = pd.DataFrame(
+    timeline_data,
+    columns=["Time", "Score (%)", "Regime", "Action"]
+)
+
+st.dataframe(timeline_df, use_container_width=True, hide_index=True)
 
 # -----------------------------------
 # FOOTER
