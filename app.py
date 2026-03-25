@@ -1,48 +1,46 @@
 import streamlit as st
 from datetime import datetime
+import pandas as pd
 
 st.set_page_config(layout="wide")
 
 # -----------------------------------
-# STYLE (SAFE + CONTROLLED)
+# STYLE (SAFE + MINIMAL)
 # -----------------------------------
 st.markdown("""
 <style>
 
-/* Sidebar — FIXED CONTRAST */
+/* Sidebar — balanced contrast */
 [data-testid="stSidebar"] {
-    background-color: #111827;
+    background-color: #0f172a;
 }
 
 [data-testid="stSidebar"] * {
-    color: #e5e7eb !important;
+    color: #cbd5f5 !important;
 }
 
-/* Slider track subtle */
+/* Reduce slider intensity */
 .stSlider > div > div {
     color: #9ca3af !important;
 }
 
-/* Main background */
+/* Main spacing */
 .block-container {
-    padding-top: 2rem;
-}
-
-/* Titles */
-h1 {
-    font-weight: 700;
+    padding-top: 1.5rem;
+    padding-left: 3rem;
+    padding-right: 3rem;
 }
 
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------
-# HEADER (WITH LOGO)
+# HEADER WITH LOGO
 # -----------------------------------
-col_logo, col_title = st.columns([1, 6])
+col_logo, col_title = st.columns([1.5, 6])
 
 with col_logo:
-    st.image("logo.png", width=80)  # <-- MAKE SURE FILE EXISTS
+    st.image("logo.png", use_container_width=True)  # ensure logo is properly cropped externally
 
 with col_title:
     st.title("ProbabilityLens")
@@ -65,32 +63,42 @@ health = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital Availability", 0.0, 1.0, 0.5)
 
 # -----------------------------------
-# ENGINE
+# DECISION ENGINE FUNCTION
 # -----------------------------------
-score = (
-    signal * 0.2 +
-    timing * 0.2 +
-    confirmation * 0.2 +
-    alignment * 0.2 +
-    crowding * 0.05 +
-    health * 0.075 +
-    capital * 0.075
+def compute_decision(signal, timing, confirmation, alignment, crowding, health, capital):
+    score = (
+        signal * 0.2 +
+        timing * 0.2 +
+        confirmation * 0.2 +
+        alignment * 0.2 +
+        crowding * 0.05 +
+        health * 0.075 +
+        capital * 0.075
+    )
+
+    score_pct = int(score * 100)
+
+    if score < 0.5:
+        regime = "PREPARATION"
+        action = "NO POSITION"
+    elif score < 0.7:
+        regime = "DEVELOPING"
+        action = "WAIT"
+    elif score < 0.85:
+        regime = "NEAR TRIGGER"
+        action = "WAIT"
+    else:
+        regime = "ACTIONABLE"
+        action = "ADD"
+
+    return score_pct, regime, action
+
+# -----------------------------------
+# CURRENT SCENARIO
+# -----------------------------------
+score_pct, regime, action = compute_decision(
+    signal, timing, confirmation, alignment, crowding, health, capital
 )
-
-score_pct = int(score * 100)
-
-if score < 0.5:
-    regime = "PREPARATION"
-    action = "NO POSITION"
-elif score < 0.7:
-    regime = "DEVELOPING"
-    action = "WAIT"
-elif score < 0.85:
-    regime = "NEAR TRIGGER"
-    action = "WAIT"
-else:
-    regime = "ACTIONABLE"
-    action = "ADD"
 
 # -----------------------------------
 # LAYOUT
@@ -112,7 +120,7 @@ with col1:
     st.write(f"Capital: {capital:.2f}")
 
 # -----------------------------------
-# SYSTEM OUTPUT (STRONGER)
+# SYSTEM OUTPUT
 # -----------------------------------
 with col2:
     st.subheader("SYSTEM OUTPUT")
@@ -132,6 +140,16 @@ with col2:
     else:
         st.success(action)
 
+    # Decision interpretation (key upgrade)
+    st.caption("SYSTEM INTERPRETATION")
+
+    if action == "NO POSITION":
+        st.write("Conditions insufficient for risk deployment. Monitor for signal development.")
+    elif action == "WAIT":
+        st.write("Setup forming. Await confirmation before allocation.")
+    else:
+        st.write("Conditions aligned. Incremental exposure warranted.")
+
 # -----------------------------------
 # CONSTRAINTS
 # -----------------------------------
@@ -149,9 +167,32 @@ with col3:
 
     if constraints:
         for c in constraints:
-            st.warning(c)
+            st.error(c)
     else:
         st.success("No constraints")
+
+# -----------------------------------
+# SCENARIO COMPARISON PANEL
+# -----------------------------------
+st.divider()
+st.subheader("Scenario Comparison")
+
+# Define scenarios
+scenarios = {
+    "Base Case": (signal, timing, confirmation, alignment, crowding, health, capital),
+    "Bull Case": (0.8, 0.8, 0.8, 0.8, 0.6, 0.7, 0.7),
+    "Stress Case": (0.2, 0.2, 0.2, 0.2, 0.7, 0.4, 0.4),
+}
+
+data = []
+
+for name, vals in scenarios.items():
+    s, r, a = compute_decision(*vals)
+    data.append([name, s, r, a])
+
+df = pd.DataFrame(data, columns=["Scenario", "Score (%)", "Regime", "Action"])
+
+st.dataframe(df, use_container_width=True)
 
 # -----------------------------------
 # FOOTER
