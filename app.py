@@ -9,10 +9,29 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
-# =========================
-# PAGE CONFIG
-# =========================
 st.set_page_config(layout="wide")
+
+# =========================
+# LOAD REAL WTI DATA (EIA XLS)
+# =========================
+def load_wti():
+    try:
+        # Try reading Excel (EIA format)
+        df = pd.read_excel("data/wti.xls", skiprows=2)
+
+        # Standardize column names
+        df.columns = ["Date", "Price"]
+
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.dropna()
+
+        return df
+
+    except:
+        # fallback (if file missing or format issue)
+        dates = pd.date_range(end=datetime.today(), periods=60)
+        price = np.cumsum(np.random.normal(0, 1, 60)) + 70
+        return pd.DataFrame({"Date": dates, "Price": price})
 
 # =========================
 # SIDEBAR INPUTS
@@ -27,9 +46,6 @@ crowding = st.sidebar.slider("Crowding", 0.0, 1.0, 0.5)
 health = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital Availability", 0.0, 1.0, 0.5)
 
-# =========================
-# INPUTS (0–100 SCALE)
-# =========================
 inputs = {
     "signal": signal * 100,
     "timing": timing * 100,
@@ -54,14 +70,20 @@ else:
     regime = "NEAR TRIGGER"
     action = "ENTER"
 
-# Conviction
 dispersion = max(inputs.values()) - min(inputs.values())
-if dispersion < 20:
-    conviction = "HIGH"
-elif dispersion < 40:
-    conviction = "MEDIUM"
-else:
-    conviction = "LOW"
+conviction = "HIGH" if dispersion < 20 else "MEDIUM" if dispersion < 40 else "LOW"
+
+# =========================
+# EXPECTED MOVE MODEL
+# =========================
+base_move = (score - 50) / 5
+alignment_boost = (inputs["alignment"] - 50) / 10
+signal_boost = (inputs["signal"] - 50) / 10
+
+expected_move = round(base_move + alignment_boost + signal_boost, 1)
+expected_move = max(min(expected_move, 12), -12)
+
+expected_move_str = f"{expected_move:+}%"
 
 # =========================
 # HEADER
@@ -79,7 +101,7 @@ with col2:
 st.divider()
 
 # =========================
-# SYSTEM OUTPUT (UPGRADED)
+# TOP DECISION BLOCK
 # =========================
 colA, colB, colC, colD = st.columns(4)
 
@@ -88,18 +110,16 @@ colB.metric("READINESS", f"{int(score)}%")
 colC.metric("ACTION", action)
 colD.metric("CONVICTION", conviction)
 
-st.markdown("""
+st.markdown(f"""
 **Time Horizon:** 2–4 weeks  
-**Expected Move:** +6–9% oil
+**Expected Move:** {expected_move_str}
 """)
 
 st.divider()
 
 # =========================
-# NARRATIVE (DYNAMIC)
+# NARRATIVE
 # =========================
-st.subheader("Decision Rationale")
-
 if inputs["signal"] > 70 and inputs["alignment"] > 70:
     macro = "broad macro alignment is strengthening across demand indicators"
 else:
@@ -108,7 +128,7 @@ else:
 if inputs["crowding"] < 40:
     positioning = "Positioning remains crowded, increasing downside volatility risk"
 else:
-    positioning = "Positioning remains supportive and not stretched"
+    positioning = "Positioning remains supportive"
 
 narrative = f"""
 The market is underestimating demand-driven downside pressure on oil prices, 
@@ -116,13 +136,12 @@ as {macro}. {positioning}, suggesting current pricing does not fully reflect
 the evolving macro environment.
 """
 
+st.subheader("Decision Rationale")
 st.write(narrative)
 
 # =========================
 # SIGNAL ATTRIBUTION
 # =========================
-st.subheader("Signal Attribution")
-
 weights = {
     "signal": 0.2,
     "timing": 0.15,
@@ -142,90 +161,37 @@ for k, v in inputs.items():
     })
 
 df_attr = pd.DataFrame(rows)
+
+st.subheader("Signal Attribution")
 st.dataframe(df_attr, use_container_width=True)
 
 # =========================
-# DATA (TEMPORARY)
+# REAL DATA CHART
 # =========================
-dates = pd.date_range(end=datetime.today(), periods=60)
+df = load_wti()
 
-price = np.cumsum(np.random.normal(0, 1, 60)) + 70
-signal_series = np.clip(np.random.normal(0.3, 0.1, 60), 0, 1) * 100
+fig = go.Figure()
 
-df = pd.DataFrame({
-    "Date": dates,
-    "Price": price,
-    "Signal": signal_series
-})
+fig.add_trace(go.Scatter(
+    x=df["Date"],
+    y=df["Price"],
+    name="WTI",
+    line=dict(color="#00C8FF", width=3)
+))
 
-# =========================
-# CHART (IMPROVED)
-# =========================
-def create_chart(df):
+fig.add_vline(x=df["Date"].iloc[-1], line_dash="dash")
 
-    fig = go.Figure()
+fig.update_layout(
+    template="plotly_dark",
+    height=500,
+    yaxis=dict(title="WTI ($)")
+)
 
-    fig.add_trace(go.Scatter(
-        x=df["Date"],
-        y=df["Price"],
-        name="WTI",
-        line=dict(color="#00C8FF", width=3)
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=df["Date"],
-        y=df["Signal"],
-        name="Signal",
-        yaxis="y2",
-        line=dict(color="#FF5A5F", dash="dot"),
-        opacity=0.7
-    ))
-
-    fig.add_vline(x=df["Date"].iloc[-1], line_dash="dash")
-
-    fig.update_layout(
-        template="plotly_dark",
-        height=500,
-        paper_bgcolor="#0b0f14",
-        plot_bgcolor="#0b0f14",
-        yaxis=dict(title="WTI ($)"),
-        yaxis2=dict(overlaying="y", side="right", title="Signal")
-    )
-
-    return fig
-
-st.subheader("Oil Price Context + Signal Overlay")
-fig = create_chart(df)
+st.subheader("Oil Price Context")
 st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# SCENARIOS
-# =========================
-scenarios = pd.DataFrame({
-    "Scenario": ["Base", "Bull", "Stress"],
-    "Score": [int(score), 77, 25],
-    "Regime": [regime, "NEAR TRIGGER", "PREPARATION"],
-    "Action": [action, "WAIT", "NO POSITION"]
-})
-
-st.subheader("Scenario Comparison")
-st.dataframe(scenarios, use_container_width=True)
-
-# =========================
-# TIMELINE
-# =========================
-timeline = pd.DataFrame({
-    "Time": ["T-3", "T-2", "T-1", "Now"],
-    "Score": [26, 34, 48, int(score)],
-    "Regime": ["PREPARATION", "PREPARATION", "DEVELOPING", regime],
-    "Action": ["NO POSITION", "NO POSITION", "WAIT", action]
-})
-
-st.subheader("Scenario Timeline")
-st.dataframe(timeline, use_container_width=True)
-
-# =========================
-# PDF GENERATOR (UPGRADED)
+# PDF GENERATOR
 # =========================
 def generate_pdf():
 
@@ -238,15 +204,15 @@ def generate_pdf():
     elements.append(Paragraph("PROBABILITYLENS — OIL RISK MONITOR", styles["Title"]))
     elements.append(Spacer(1, 12))
 
-    elements.append(Paragraph("Executive Summary", styles["Heading2"]))
+    elements.append(Paragraph("Decision", styles["Heading2"]))
     elements.append(Paragraph(
-        f"{regime} | {int(score)}% | {action}",
+        f"{regime} | {int(score)}% | {action} | Move: {expected_move_str}",
         styles["Normal"]
     ))
 
     elements.append(Spacer(1, 12))
 
-    elements.append(Paragraph("Decision Rationale", styles["Heading2"]))
+    elements.append(Paragraph("Executive Summary", styles["Heading2"]))
     elements.append(Paragraph(narrative, styles["Normal"]))
 
     elements.append(Spacer(1, 12))
