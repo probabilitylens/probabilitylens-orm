@@ -1,21 +1,18 @@
 import streamlit as st
 from supabase import create_client
+import datetime
 
 # -----------------------------
-# SUPABASE CONFIG
+# CONFIG
 # -----------------------------
 SUPABASE_URL = "https://kqayxhhvfqelwqsuxnwv.supabase.co"
 SUPABASE_KEY = "sb_publishable_d9cUMbsI7GNFEm4pgvYUww_Jh8ro__n"
-
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# -----------------------------
-# PAGE CONFIG
-# -----------------------------
 st.set_page_config(layout="wide", page_title="ProbabilityLens Terminal")
 
 # -----------------------------
-# GLOBAL STYLING (FIXED UI)
+# STYLE (BLOOMBERG TERMINAL)
 # -----------------------------
 st.markdown("""
 <style>
@@ -25,30 +22,29 @@ body {
 }
 
 .block-container {
-    padding-top: 2rem;
+    padding-top: 1.5rem;
 }
 
 .panel {
-    background: #1c2430;
+    background: linear-gradient(145deg, #1c2430, #141a23);
     padding: 20px;
-    border-radius: 10px;
-    color: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 4px 25px rgba(0,0,0,0.5);
 }
 
 .metric {
     font-size: 34px;
     font-weight: bold;
-    color: white;
 }
 
 .label {
-    font-size: 12px;
+    font-size: 11px;
     color: #9aa4af;
     margin-top: 10px;
 }
 
 div[data-testid="stSidebar"] {
-    background-color: #11161f;
+    background-color: #0f141c;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -59,8 +55,11 @@ div[data-testid="stSidebar"] {
 if "user" not in st.session_state:
     st.session_state.user = None
 
+if "timeline" not in st.session_state:
+    st.session_state.timeline = []
+
 # -----------------------------
-# AUTH FUNCTIONS (DEBUG ENABLED)
+# AUTH FUNCTIONS
 # -----------------------------
 def login(email, password):
     try:
@@ -70,7 +69,7 @@ def login(email, password):
         })
         st.session_state.user = res.user
     except Exception as e:
-        st.error(f"Login error: {e}")
+        st.error(e)
 
 def signup(email, password):
     try:
@@ -78,21 +77,19 @@ def signup(email, password):
             "email": email,
             "password": password
         })
-        st.success("Account created. You can now log in.")
+        st.success("Account created")
     except Exception as e:
-        st.error(f"Signup error: {e}")
+        st.error(e)
 
 # -----------------------------
 # LOGIN SCREEN
 # -----------------------------
 if not st.session_state.user:
 
-    # Logo spacing fix
-    st.markdown("<div style='margin-top:30px'></div>", unsafe_allow_html=True)
     st.image("logo.png", width=140)
 
     st.markdown("""
-    <h1 style='margin-bottom:0'>ProbabilityLens</h1>
+    <h1>ProbabilityLens</h1>
     <p style='color:gray'>Deterministic Macro Risk Engine</p>
     """, unsafe_allow_html=True)
 
@@ -103,8 +100,7 @@ if not st.session_state.user:
         password = st.text_input("Password", type="password")
 
         if st.button("Login"):
-            with st.spinner("Authenticating..."):
-                login(email, password)
+            login(email, password)
 
     with tab2:
         email = st.text_input("New Email")
@@ -116,37 +112,57 @@ if not st.session_state.user:
     st.stop()
 
 # -----------------------------
-# HEADER (FIXED LOGO POSITION)
+# HEADER GRID
 # -----------------------------
-col_logo, col_title = st.columns([1,5])
+col_logo, col_title = st.columns([1,6])
 
 with col_logo:
-    st.markdown("<div style='margin-top:20px'></div>", unsafe_allow_html=True)
-    st.image("logo.png", width=120)
+    st.image("logo.png", width=110)
 
 with col_title:
-    st.title("ProbabilityLens Terminal")
-    st.caption("Deterministic Macro Risk Engine — Oil Markets")
+    st.markdown("""
+    <h1 style='margin-bottom:0'>ProbabilityLens Terminal</h1>
+    <p style='color:#9aa4af;margin-top:0'>
+    Deterministic Macro Risk Engine — Oil Markets
+    </p>
+    """, unsafe_allow_html=True)
 
 # -----------------------------
-# DEMO MODE
+# DEMO MODE (INVESTOR)
 # -----------------------------
-mode = st.sidebar.selectbox("Scenario Mode", [
+demo = st.sidebar.selectbox("Mode", [
     "Manual",
-    "Weak",
-    "Neutral",
-    "Strong"
+    "Investor Demo"
+])
+
+scenario = st.sidebar.selectbox("Scenario", [
+    "Weak Macro",
+    "Transition",
+    "Pre-Breakout",
+    "Full Alignment"
 ])
 
 # -----------------------------
 # INPUTS
 # -----------------------------
-if mode == "Weak":
-    signal, timing, conf, align, crowd, health, capital = 0.2,0.1,0.2,0.2,0.6,0.4,0.3
-elif mode == "Neutral":
-    signal, timing, conf, align, crowd, health, capital = 0.5,0.4,0.5,0.5,0.5,0.5,0.5
-elif mode == "Strong":
-    signal, timing, conf, align, crowd, health, capital = 0.9,0.9,0.9,0.8,0.4,0.8,0.9
+if demo == "Investor Demo":
+
+    if scenario == "Weak Macro":
+        signal, timing, conf, align, crowd, health, capital = 0.2,0.1,0.2,0.2,0.6,0.4,0.3
+        st.sidebar.info("Market weak, no structural edge.")
+
+    elif scenario == "Transition":
+        signal, timing, conf, align, crowd, health, capital = 0.5,0.4,0.5,0.5,0.5,0.5,0.5
+        st.sidebar.info("Early alignment forming.")
+
+    elif scenario == "Pre-Breakout":
+        signal, timing, conf, align, crowd, health, capital = 0.7,0.65,0.7,0.7,0.5,0.6,0.7
+        st.sidebar.info("Setup forming, waiting trigger.")
+
+    else:
+        signal, timing, conf, align, crowd, health, capital = 0.9,0.9,0.9,0.85,0.4,0.8,0.9
+        st.sidebar.success("Full alignment — actionable.")
+
 else:
     signal = st.sidebar.slider("Signal", 0.0, 1.0, 0.3)
     timing = st.sidebar.slider("Timing", 0.0, 1.0, 0.3)
@@ -157,7 +173,7 @@ else:
     capital = st.sidebar.slider("Capital", 0.0, 1.0, 0.5)
 
 # -----------------------------
-# SCORE
+# SCORE ENGINE
 # -----------------------------
 score = (
     signal*0.2 + timing*0.2 + conf*0.15 +
@@ -178,11 +194,11 @@ else:
     regime, action, color = "ACTIONABLE", "ADD", "green"
 
 # -----------------------------
-# LAYOUT
+# GRID LAYOUT
 # -----------------------------
-c1, c2, c3 = st.columns([1,1.2,1])
+c1, c2, c3 = st.columns([1,1.3,1])
 
-# INPUT STATE
+# INPUT PANEL
 with c1:
     st.markdown("### INPUT STATE")
     st.markdown(f"""
@@ -194,13 +210,12 @@ with c1:
     </div>
     """, unsafe_allow_html=True)
 
-# TERMINAL OUTPUT (FIXED VISIBILITY)
+# OUTPUT PANEL
 with c2:
     st.markdown("### TERMINAL OUTPUT")
     st.markdown(f"""
     <div class='panel'>
-
-    <div class='label'>MARKET STATE</div>
+    <div class='label'>STATE</div>
     <div class='metric'>{regime}</div>
 
     <div class='label'>READINESS</div>
@@ -208,7 +223,6 @@ with c2:
 
     <div class='label'>ACTION</div>
     <div class='metric' style='color:{color}'>{action}</div>
-
     </div>
     """, unsafe_allow_html=True)
 
@@ -216,25 +230,46 @@ with c2:
 with c3:
     st.markdown("### CONSTRAINTS")
     cons = []
-
     if signal < 0.6: cons.append("No structural edge")
     if timing < 0.6: cons.append("Timing inactive")
     if conf < 0.6: cons.append("No confirmation")
 
     for c in cons:
-        st.markdown(f"- {c}")
+        st.markdown(f"❌ {c}")
 
 # -----------------------------
-# SAVE
+# SAVE + TIMELINE
 # -----------------------------
 if st.button("Save Scenario"):
+    entry = {
+        "time": datetime.datetime.now().strftime("%H:%M:%S"),
+        "score": round(score,2),
+        "regime": regime,
+        "action": action
+    }
+    st.session_state.timeline.append(entry)
+
     supabase.table("scenarios").insert({
         "user_email": st.session_state.user.email,
         "score": score,
         "regime": regime,
         "action": action
     }).execute()
-    st.success("Scenario saved")
+
+    st.success("Saved")
+
+# -----------------------------
+# TIMELINE VIEW
+# -----------------------------
+st.markdown("---")
+st.markdown("### Scenario Timeline")
+
+for t in reversed(st.session_state.timeline):
+    st.markdown(f"""
+    <div class='panel'>
+    <b>{t['time']}</b> — {t['regime']} | {t['action']} | {t['score']}
+    </div>
+    """, unsafe_allow_html=True)
 
 # -----------------------------
 # FOOTER
