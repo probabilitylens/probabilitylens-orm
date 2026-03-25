@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import BytesIO
 
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
@@ -28,9 +28,21 @@ health = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital Availability", 0.0, 1.0, 0.5)
 
 # =========================
+# INPUTS (0–100 SCALE)
+# =========================
+inputs = {
+    "signal": signal * 100,
+    "timing": timing * 100,
+    "alignment": alignment * 100,
+    "crowding": crowding * 100,
+    "market_health": health * 100,
+    "capital": capital * 100
+}
+
+# =========================
 # ENGINE
 # =========================
-score = np.mean([signal, timing, confirmation, alignment, health, capital]) * 100
+score = np.mean(list(inputs.values()))
 
 if score < 50:
     regime = "PREPARATION"
@@ -42,8 +54,17 @@ else:
     regime = "NEAR TRIGGER"
     action = "ENTER"
 
+# Conviction
+dispersion = max(inputs.values()) - min(inputs.values())
+if dispersion < 20:
+    conviction = "HIGH"
+elif dispersion < 40:
+    conviction = "MEDIUM"
+else:
+    conviction = "LOW"
+
 # =========================
-# HEADER (LOGO FIXED)
+# HEADER
 # =========================
 col1, col2 = st.columns([1, 4])
 
@@ -58,45 +79,73 @@ with col2:
 st.divider()
 
 # =========================
-# SYSTEM OUTPUT
+# SYSTEM OUTPUT (UPGRADED)
 # =========================
-colA, colB = st.columns([2, 1])
+colA, colB, colC, colD = st.columns(4)
 
-with colA:
-    st.subheader("SYSTEM OUTPUT")
-    st.markdown(f"### {regime}")
-    st.markdown(f"### {int(score)}%")
-
-    st.error(action)
-
-with colB:
-    st.subheader("CONSTRAINTS")
-
-    if score < 50:
-        st.warning("Weak signal strength")
-        st.warning("Timing inactive")
-        st.warning("No confirmation")
-        st.warning("Cross-market misalignment")
-
-# =========================
-# INTERPRETATION + RATIONALE
-# =========================
-st.subheader("System Interpretation")
-
-if score < 50:
-    st.write("Conditions insufficient for risk deployment. Monitor for signal development.")
-
-st.subheader("Decision Rationale")
+colA.metric("REGIME", regime)
+colB.metric("READINESS", f"{int(score)}%")
+colC.metric("ACTION", action)
+colD.metric("CONVICTION", conviction)
 
 st.markdown("""
-- Weak signal strength  
-- Timing inactive  
-- No confirmation  
-- Cross-market misalignment  
+**Time Horizon:** 2–4 weeks  
+**Expected Move:** +6–9% oil
 """)
 
+st.divider()
+
 # =========================
-# REAL OIL DATA (NO API)
+# NARRATIVE (DYNAMIC)
+# =========================
+st.subheader("Decision Rationale")
+
+if inputs["signal"] > 70 and inputs["alignment"] > 70:
+    macro = "broad macro alignment is strengthening across demand indicators"
+else:
+    macro = "macro signals remain fragmented and lack confirmation"
+
+if inputs["crowding"] < 40:
+    positioning = "Positioning remains crowded, increasing downside volatility risk"
+else:
+    positioning = "Positioning remains supportive and not stretched"
+
+narrative = f"""
+The market is underestimating demand-driven downside pressure on oil prices, 
+as {macro}. {positioning}, suggesting current pricing does not fully reflect 
+the evolving macro environment.
+"""
+
+st.write(narrative)
+
+# =========================
+# SIGNAL ATTRIBUTION
+# =========================
+st.subheader("Signal Attribution")
+
+weights = {
+    "signal": 0.2,
+    "timing": 0.15,
+    "alignment": 0.2,
+    "crowding": 0.15,
+    "market_health": 0.15,
+    "capital": 0.15
+}
+
+rows = []
+for k, v in inputs.items():
+    rows.append({
+        "Factor": k.upper(),
+        "Score": int(v),
+        "Contribution": round(v * weights[k], 2),
+        "Interpretation": "Positive" if v > 60 else "Neutral"
+    })
+
+df_attr = pd.DataFrame(rows)
+st.dataframe(df_attr, use_container_width=True)
+
+# =========================
+# DATA (TEMPORARY)
 # =========================
 dates = pd.date_range(end=datetime.today(), periods=60)
 
@@ -110,7 +159,7 @@ df = pd.DataFrame({
 })
 
 # =========================
-# BLOOMBERG CHART
+# CHART (IMPROVED)
 # =========================
 def create_chart(df):
 
@@ -132,32 +181,15 @@ def create_chart(df):
         opacity=0.7
     ))
 
-    fig.add_vrect(
-        x0=df["Date"].iloc[-15],
-        x1=df["Date"].iloc[-1],
-        fillcolor="rgba(120,120,120,0.25)",
-        layer="below",
-        line_width=0
-    )
-
-    fig.add_annotation(
-        x=df["Date"].iloc[-1],
-        y=df["Price"].iloc[-1],
-        text=f"{regime} ({int(score)}%)",
-        showarrow=True,
-        bgcolor="black",
-        font=dict(color="white")
-    )
+    fig.add_vline(x=df["Date"].iloc[-1], line_dash="dash")
 
     fig.update_layout(
         template="plotly_dark",
         height=500,
         paper_bgcolor="#0b0f14",
         plot_bgcolor="#0b0f14",
-        xaxis=dict(gridcolor="#222"),
-        yaxis=dict(title="WTI ($)", gridcolor="#222"),
-        yaxis2=dict(overlaying="y", side="right", title="Signal"),
-        legend=dict(orientation="h", y=1.05)
+        yaxis=dict(title="WTI ($)"),
+        yaxis2=dict(overlaying="y", side="right", title="Signal")
     )
 
     return fig
@@ -193,7 +225,7 @@ st.subheader("Scenario Timeline")
 st.dataframe(timeline, use_container_width=True)
 
 # =========================
-# PDF GENERATOR (FIXED)
+# PDF GENERATOR (UPGRADED)
 # =========================
 def generate_pdf():
 
@@ -203,33 +235,25 @@ def generate_pdf():
 
     elements = []
 
-    elements.append(Paragraph("PROBABILITYLENS REPORT", styles["Title"]))
+    elements.append(Paragraph("PROBABILITYLENS — OIL RISK MONITOR", styles["Title"]))
     elements.append(Spacer(1, 12))
 
     elements.append(Paragraph("Executive Summary", styles["Heading2"]))
     elements.append(Paragraph(
-        f"Regime: {regime} | Score: {int(score)}% | Action: {action}",
+        f"{regime} | {int(score)}% | {action}",
         styles["Normal"]
     ))
 
     elements.append(Spacer(1, 12))
 
-    # Chart
-    img_bytes = fig.to_image(format="png")
-    img_buffer = BytesIO(img_bytes)
-    elements.append(Image(img_buffer, width=500, height=300))
+    elements.append(Paragraph("Decision Rationale", styles["Heading2"]))
+    elements.append(Paragraph(narrative, styles["Normal"]))
 
     elements.append(Spacer(1, 12))
 
-    # Scenario table
-    table = Table([scenarios.columns.tolist()] + scenarios.values.tolist())
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.black),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.grey)
-    ]))
-
-    elements.append(table)
+    img_bytes = fig.to_image(format="png")
+    img_buffer = BytesIO(img_bytes)
+    elements.append(Image(img_buffer, width=500, height=300))
 
     doc.build(elements)
     buffer.seek(0)
@@ -237,7 +261,7 @@ def generate_pdf():
     return buffer
 
 # =========================
-# EXPORT BUTTON
+# EXPORT
 # =========================
 st.subheader("Export")
 
