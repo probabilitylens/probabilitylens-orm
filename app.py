@@ -1,7 +1,8 @@
 import streamlit as st
 from datetime import datetime
 import pandas as pd
-import numpy as np
+import yfinance as yf
+import plotly.graph_objects as go
 
 st.set_page_config(layout="wide")
 
@@ -28,12 +29,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------
-# HEADER
+# HEADER (OPTION B LOGO FIX)
 # -----------------------------------
-col_logo, col_title = st.columns([1.2, 6])
+col_logo, col_title = st.columns([1, 6])
 
 with col_logo:
-    st.image("logo.png", width=140)
+    st.markdown(
+        """
+        <div style="
+            width:140px;
+            height:70px;
+            overflow:hidden;
+            display:flex;
+            align-items:center;
+        ">
+            <img src="logo.png" style="width:180px; margin-left:-20px;">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 with col_title:
     st.markdown("### ProbabilityLens")
@@ -126,9 +140,7 @@ with col2:
     else:
         st.write("Conditions aligned. Incremental exposure warranted.")
 
-    # -----------------------------------
-    # DECISION RATIONALE
-    # -----------------------------------
+    # Rationale
     st.caption("DECISION RATIONALE")
 
     drivers = []
@@ -156,15 +168,11 @@ with col2:
         for r in risks:
             st.write(f"- {r}")
 
-    if not drivers and not risks:
-        st.write("All key conditions aligned.")
-
 # -----------------------------------
 # CONSTRAINTS
 # -----------------------------------
 with col3:
     st.subheader("CONSTRAINTS")
-    st.caption("ACTIVE CONSTRAINTS")
 
     constraints = []
 
@@ -182,24 +190,56 @@ with col3:
         st.success("No constraints")
 
 # -----------------------------------
-# OIL PRICE CHART (SIMULATED OVERLAY)
+# REAL OIL DATA (WTI)
 # -----------------------------------
 st.divider()
 st.subheader("Oil Price Context + Signal Overlay")
 
-# Simulated oil price data (replace later with real API)
-dates = pd.date_range(end=datetime.today(), periods=50)
-price = np.cumsum(np.random.normal(0.2, 1, 50)) + 70
+# Fetch real oil price (WTI)
+oil = yf.download("CL=F", period="3mo", interval="1d")
 
-signal_series = np.linspace(0.2, signal, 50) * 100
+oil = oil[['Close']].dropna()
+oil.rename(columns={"Close": "Oil Price"}, inplace=True)
 
-df_chart = pd.DataFrame({
-    "Date": dates,
-    "Oil Price": price,
-    "Signal Strength": signal_series
-}).set_index("Date")
+# Create signal overlay (scaled)
+oil["Signal"] = (signal * 100)
 
-st.line_chart(df_chart)
+# -----------------------------------
+# BLOOMBERG-STYLE CHART (PLOTLY)
+# -----------------------------------
+fig = go.Figure()
+
+# Oil price
+fig.add_trace(go.Scatter(
+    x=oil.index,
+    y=oil["Oil Price"],
+    name="WTI Oil Price",
+    line=dict(width=2)
+))
+
+# Signal overlay (secondary axis)
+fig.add_trace(go.Scatter(
+    x=oil.index,
+    y=oil["Signal"],
+    name="Signal Strength",
+    line=dict(dash="dot"),
+    yaxis="y2"
+))
+
+fig.update_layout(
+    template="plotly_dark",
+    height=400,
+    margin=dict(l=10, r=10, t=30, b=10),
+    yaxis=dict(title="Oil Price"),
+    yaxis2=dict(
+        title="Signal (%)",
+        overlaying="y",
+        side="right"
+    ),
+    legend=dict(orientation="h", y=1.02)
+)
+
+st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------------
 # SCENARIO COMPARISON
