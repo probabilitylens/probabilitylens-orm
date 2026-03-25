@@ -2,7 +2,7 @@ import streamlit as st
 from supabase import create_client
 
 # -----------------------------
-# SUPABASE CONFIG (PASTE YOURS HERE)
+# SUPABASE CONFIG
 # -----------------------------
 SUPABASE_URL = "https://kqayxhhvfqelwqsuxnwv.supabase.co"
 SUPABASE_KEY = "sb_publishable_d9cUMbsI7GNFEm4pgvYUww_Jh8ro__n"
@@ -15,24 +15,43 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 st.set_page_config(layout="wide", page_title="ProbabilityLens Terminal")
 
 # -----------------------------
-# UI STYLE (BLOOMBERG)
+# GLOBAL STYLING (FIXED UI)
 # -----------------------------
 st.markdown("""
 <style>
-body { background-color:#0b0f14; color:#e6e6e6; }
-.block-container { padding-top:1rem; }
-.metric { font-size:32px; font-weight:bold; }
-.panel { background:#141a23; padding:15px; border-radius:8px; }
+body {
+    background-color: #0b0f14;
+    color: #e6e6e6;
+}
+
+.block-container {
+    padding-top: 2rem;
+}
+
+.panel {
+    background: #1c2430;
+    padding: 20px;
+    border-radius: 10px;
+    color: #ffffff;
+}
+
+.metric {
+    font-size: 34px;
+    font-weight: bold;
+    color: white;
+}
+
+.label {
+    font-size: 12px;
+    color: #9aa4af;
+    margin-top: 10px;
+}
+
+div[data-testid="stSidebar"] {
+    background-color: #11161f;
+}
 </style>
 """, unsafe_allow_html=True)
-
-# -----------------------------
-# LOGO
-# -----------------------------
-try:
-    st.image("logo.png", width=140)
-except:
-    pass
 
 # -----------------------------
 # AUTH STATE
@@ -41,7 +60,7 @@ if "user" not in st.session_state:
     st.session_state.user = None
 
 # -----------------------------
-# LOGIN FUNCTIONS
+# AUTH FUNCTIONS (DEBUG ENABLED)
 # -----------------------------
 def login(email, password):
     try:
@@ -50,8 +69,8 @@ def login(email, password):
             "password": password
         })
         st.session_state.user = res.user
-    except:
-        st.error("Login failed")
+    except Exception as e:
+        st.error(f"Login error: {e}")
 
 def signup(email, password):
     try:
@@ -59,37 +78,55 @@ def signup(email, password):
             "email": email,
             "password": password
         })
-        st.success("Account created. Now login.")
-    except:
-        st.error("Signup failed")
+        st.success("Account created. You can now log in.")
+    except Exception as e:
+        st.error(f"Signup error: {e}")
 
 # -----------------------------
 # LOGIN SCREEN
 # -----------------------------
 if not st.session_state.user:
-    st.title("ProbabilityLens")
+
+    # Logo spacing fix
+    st.markdown("<div style='margin-top:30px'></div>", unsafe_allow_html=True)
+    st.image("logo.png", width=140)
+
+    st.markdown("""
+    <h1 style='margin-bottom:0'>ProbabilityLens</h1>
+    <p style='color:gray'>Deterministic Macro Risk Engine</p>
+    """, unsafe_allow_html=True)
 
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
     with tab1:
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
+
         if st.button("Login"):
-            login(email, password)
+            with st.spinner("Authenticating..."):
+                login(email, password)
 
     with tab2:
         email = st.text_input("New Email")
         password = st.text_input("New Password", type="password")
+
         if st.button("Create Account"):
             signup(email, password)
 
     st.stop()
 
 # -----------------------------
-# HEADER
+# HEADER (FIXED LOGO POSITION)
 # -----------------------------
-st.title("ProbabilityLens Terminal")
-st.caption("Deterministic Macro Risk Engine — Oil Markets")
+col_logo, col_title = st.columns([1,5])
+
+with col_logo:
+    st.markdown("<div style='margin-top:20px'></div>", unsafe_allow_html=True)
+    st.image("logo.png", width=120)
+
+with col_title:
+    st.title("ProbabilityLens Terminal")
+    st.caption("Deterministic Macro Risk Engine — Oil Markets")
 
 # -----------------------------
 # DEMO MODE
@@ -145,23 +182,43 @@ else:
 # -----------------------------
 c1, c2, c3 = st.columns([1,1.2,1])
 
+# INPUT STATE
 with c1:
     st.markdown("### INPUT STATE")
-    st.markdown(f"<div class='panel'>Signal: {signal}<br>Timing: {timing}<br>Confirmation: {conf}</div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class='panel'>
+    Signal: {signal}<br>
+    Timing: {timing}<br>
+    Confirmation: {conf}<br>
+    Alignment: {align}
+    </div>
+    """, unsafe_allow_html=True)
 
+# TERMINAL OUTPUT (FIXED VISIBILITY)
 with c2:
     st.markdown("### TERMINAL OUTPUT")
-    st.markdown(f"<div class='panel'>\
-    <div>STATE</div><div class='metric'>{regime}</div>\
-    <div>READINESS</div><div class='metric'>{int(score*100)}%</div>\
-    <div>ACTION</div><div class='metric' style='color:{color}'>{action}</div>\
-    </div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class='panel'>
 
+    <div class='label'>MARKET STATE</div>
+    <div class='metric'>{regime}</div>
+
+    <div class='label'>READINESS</div>
+    <div class='metric'>{int(score*100)}%</div>
+
+    <div class='label'>ACTION</div>
+    <div class='metric' style='color:{color}'>{action}</div>
+
+    </div>
+    """, unsafe_allow_html=True)
+
+# CONSTRAINTS
 with c3:
     st.markdown("### CONSTRAINTS")
     cons = []
-    if signal < 0.6: cons.append("No edge")
-    if timing < 0.6: cons.append("No timing")
+
+    if signal < 0.6: cons.append("No structural edge")
+    if timing < 0.6: cons.append("Timing inactive")
     if conf < 0.6: cons.append("No confirmation")
 
     for c in cons:
@@ -177,19 +234,10 @@ if st.button("Save Scenario"):
         "regime": regime,
         "action": action
     }).execute()
-    st.success("Saved")
-
-# -----------------------------
-# HISTORY
-# -----------------------------
-st.markdown("---")
-data = supabase.table("scenarios").select("*").execute()
-
-for r in data.data:
-    st.write(r)
+    st.success("Scenario saved")
 
 # -----------------------------
 # FOOTER
 # -----------------------------
 st.markdown("---")
-st.caption("ProbabilityLens — Risk Discipline Engine")
+st.caption("ProbabilityLens — Institutional Risk Discipline Engine")
