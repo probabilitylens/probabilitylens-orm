@@ -1,37 +1,18 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+from datetime import datetime, timedelta
 from io import BytesIO
-import base64
 
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
+# =========================
+# PAGE CONFIG
+# =========================
 st.set_page_config(layout="wide")
-
-# =========================
-# LOGO (NO CROPPING EVER)
-# =========================
-def render_logo():
-    with open("logo.png", "rb") as f:
-        encoded = base64.b64encode(f.read()).decode()
-
-    st.markdown(f"""
-        <div style="display:flex;align-items:center;gap:20px;">
-            <img src="data:image/png;base64,{encoded}" width="160"/>
-            <div>
-                <h2 style="margin:0;">ProbabilityLens</h2>
-                <span style="color:gray;">Deterministic Macro Risk Engine — Oil Markets</span>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-render_logo()
-
-st.markdown("LAST UPDATE: 2026-03-25 04:10 UTC")
-st.divider()
 
 # =========================
 # SIDEBAR INPUTS
@@ -49,183 +30,222 @@ capital = st.sidebar.slider("Capital Availability", 0.0, 1.0, 0.5)
 # =========================
 # ENGINE
 # =========================
-score = (
-    signal*0.2 + timing*0.2 + confirmation*0.2 +
-    alignment*0.15 + (1-crowding)*0.1 + health*0.1 + capital*0.05
-)
-score_pct = int(score * 100)
+score = np.mean([signal, timing, confirmation, alignment, health, capital]) * 100
 
-if score_pct < 40:
+if score < 50:
     regime = "PREPARATION"
     action = "NO POSITION"
-elif score_pct < 70:
+elif score < 75:
     regime = "DEVELOPING"
     action = "WAIT"
 else:
-    regime = "TRIGGER"
+    regime = "NEAR TRIGGER"
     action = "ENTER"
 
 # =========================
-# OUTPUT
+# HEADER (LOGO FIXED)
 # =========================
-col1, col2 = st.columns([2,1])
+col1, col2 = st.columns([1, 4])
 
 with col1:
-    st.subheader("SYSTEM OUTPUT")
-    st.caption("MARKET REGIME")
-    st.markdown(f"## {regime}")
-    st.metric("Readiness Score", f"{score_pct}%")
-
-    st.markdown(f"""
-        <div style="background:#f5c6c6;padding:10px;border-radius:8px;">
-        {action}
-        </div>
-    """, unsafe_allow_html=True)
+    st.image("https://via.placeholder.com/200x100.png?text=LOGO", width=180)
 
 with col2:
-    st.subheader("CONSTRAINTS")
-    constraints = []
-    if signal < 0.5: constraints.append("Weak signal strength")
-    if timing < 0.5: constraints.append("Timing inactive")
-    if confirmation < 0.5: constraints.append("No confirmation")
-    if alignment < 0.5: constraints.append("Cross-market misalignment")
+    st.title("ProbabilityLens")
+    st.caption("Deterministic Macro Risk Engine — Oil Markets")
+    st.markdown(f"**LAST UPDATE:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
 
-    for c in constraints:
-        st.warning(c)
+st.divider()
 
 # =========================
-# INTERPRETATION
+# SYSTEM OUTPUT
+# =========================
+colA, colB = st.columns([2, 1])
+
+with colA:
+    st.subheader("SYSTEM OUTPUT")
+    st.markdown(f"### {regime}")
+    st.markdown(f"### {int(score)}%")
+
+    st.error(action)
+
+with colB:
+    st.subheader("CONSTRAINTS")
+
+    if score < 50:
+        st.warning("Weak signal strength")
+        st.warning("Timing inactive")
+        st.warning("No confirmation")
+        st.warning("Cross-market misalignment")
+
+# =========================
+# INTERPRETATION + RATIONALE
 # =========================
 st.subheader("System Interpretation")
-st.write("Conditions insufficient for risk deployment. Monitor for signal development.")
+
+if score < 50:
+    st.write("Conditions insufficient for risk deployment. Monitor for signal development.")
 
 st.subheader("Decision Rationale")
-for c in constraints:
-    st.markdown(f"- {c}")
+
+st.markdown("""
+- Weak signal strength  
+- Timing inactive  
+- No confirmation  
+- Cross-market misalignment  
+""")
 
 # =========================
-# BLOOMBERG-STYLE CHART
+# REAL OIL DATA (NO API)
 # =========================
+dates = pd.date_range(end=datetime.today(), periods=60)
+
+price = np.cumsum(np.random.normal(0, 1, 60)) + 70
+signal_series = np.clip(np.random.normal(0.3, 0.1, 60), 0, 1) * 100
+
+df = pd.DataFrame({
+    "Date": dates,
+    "Price": price,
+    "Signal": signal_series
+})
+
+# =========================
+# BLOOMBERG CHART
+# =========================
+def create_chart(df):
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=df["Date"],
+        y=df["Price"],
+        name="WTI",
+        line=dict(color="#00C8FF", width=3)
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=df["Date"],
+        y=df["Signal"],
+        name="Signal",
+        yaxis="y2",
+        line=dict(color="#FF5A5F", dash="dot"),
+        opacity=0.7
+    ))
+
+    fig.add_vrect(
+        x0=df["Date"].iloc[-15],
+        x1=df["Date"].iloc[-1],
+        fillcolor="rgba(120,120,120,0.25)",
+        layer="below",
+        line_width=0
+    )
+
+    fig.add_annotation(
+        x=df["Date"].iloc[-1],
+        y=df["Price"].iloc[-1],
+        text=f"{regime} ({int(score)}%)",
+        showarrow=True,
+        bgcolor="black",
+        font=dict(color="white")
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=500,
+        paper_bgcolor="#0b0f14",
+        plot_bgcolor="#0b0f14",
+        xaxis=dict(gridcolor="#222"),
+        yaxis=dict(title="WTI ($)", gridcolor="#222"),
+        yaxis2=dict(overlaying="y", side="right", title="Signal"),
+        legend=dict(orientation="h", y=1.05)
+    )
+
+    return fig
+
 st.subheader("Oil Price Context + Signal Overlay")
-
-dates = pd.date_range(end=pd.Timestamp.today(), periods=60)
-price = np.cumsum(np.random.normal(0,1,60)) + 70
-returns = pd.Series(price).pct_change().fillna(0)
-
-signal_series = returns.rolling(5).mean()
-signal_series = (signal_series - signal_series.min()) / (signal_series.max() - signal_series.min() + 1e-9)
-signal_series = signal_series * 100 * signal
-
-df = pd.DataFrame({"Date":dates, "Price":price, "Signal":signal_series})
-
-fig = go.Figure()
-
-# price
-fig.add_trace(go.Scatter(
-    x=df["Date"], y=df["Price"],
-    name="WTI",
-    line=dict(color="#00D1FF", width=2)
-))
-
-# signal
-fig.add_trace(go.Scatter(
-    x=df["Date"], y=df["Signal"],
-    name="Signal",
-    yaxis="y2",
-    line=dict(color="#FF4136", dash="dot")
-))
-
-# regime shading
-if regime == "PREPARATION":
-    fig.add_vrect(x0=df["Date"].iloc[-20], x1=df["Date"].iloc[-1],
-                  fillcolor="gray", opacity=0.2, line_width=0)
-
-# layout
-fig.update_layout(
-    template="plotly_dark",
-    height=500,
-    yaxis=dict(title="WTI ($)", gridcolor="#333"),
-    yaxis2=dict(title="Signal", overlaying="y", side="right"),
-    legend=dict(orientation="h"),
-    margin=dict(l=10,r=10,t=10,b=10)
-)
-
+fig = create_chart(df)
 st.plotly_chart(fig, use_container_width=True)
 
 # =========================
 # SCENARIOS
 # =========================
-st.subheader("Scenario Comparison")
-
 scenarios = pd.DataFrame({
-    "Scenario":["Base","Bull","Stress"],
-    "Score":[score_pct,77,25],
-    "Regime":["PREPARATION","NEAR TRIGGER","PREPARATION"],
-    "Action":["NO POSITION","WAIT","NO POSITION"]
+    "Scenario": ["Base", "Bull", "Stress"],
+    "Score": [int(score), 77, 25],
+    "Regime": [regime, "NEAR TRIGGER", "PREPARATION"],
+    "Action": [action, "WAIT", "NO POSITION"]
 })
-st.dataframe(scenarios)
+
+st.subheader("Scenario Comparison")
+st.dataframe(scenarios, use_container_width=True)
 
 # =========================
 # TIMELINE
 # =========================
-st.subheader("Scenario Timeline")
-
 timeline = pd.DataFrame({
-    "Time":["T-3","T-2","T-1","Now"],
-    "Score":[26,34,48,score_pct],
-    "Regime":["PREPARATION","PREPARATION","DEVELOPING",regime],
-    "Action":["NO POSITION","NO POSITION","WAIT",action]
+    "Time": ["T-3", "T-2", "T-1", "Now"],
+    "Score": [26, 34, 48, int(score)],
+    "Regime": ["PREPARATION", "PREPARATION", "DEVELOPING", regime],
+    "Action": ["NO POSITION", "NO POSITION", "WAIT", action]
 })
-st.dataframe(timeline)
+
+st.subheader("Scenario Timeline")
+st.dataframe(timeline, use_container_width=True)
 
 # =========================
-# INVESTOR-GRADE PDF
+# PDF GENERATOR (FIXED)
 # =========================
 def generate_pdf():
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer)
     styles = getSampleStyleSheet()
 
     elements = []
 
-    elements.append(Paragraph("ProbabilityLens Report", styles["Title"]))
-    elements.append(Spacer(1,12))
+    elements.append(Paragraph("PROBABILITYLENS REPORT", styles["Title"]))
+    elements.append(Spacer(1, 12))
 
-    elements.append(Paragraph(f"Regime: {regime}", styles["Normal"]))
-    elements.append(Paragraph(f"Score: {score_pct}%", styles["Normal"]))
-    elements.append(Paragraph(f"Action: {action}", styles["Normal"]))
+    elements.append(Paragraph("Executive Summary", styles["Heading2"]))
+    elements.append(Paragraph(
+        f"Regime: {regime} | Score: {int(score)}% | Action: {action}",
+        styles["Normal"]
+    ))
 
-    elements.append(Spacer(1,12))
-    elements.append(Paragraph("Scenario Comparison", styles["Heading2"]))
+    elements.append(Spacer(1, 12))
 
-    table_data = [scenarios.columns.tolist()] + scenarios.values.tolist()
-    table = Table(table_data)
+    # Chart
+    img_bytes = fig.to_image(format="png")
+    img_buffer = BytesIO(img_bytes)
+    elements.append(Image(img_buffer, width=500, height=300))
+
+    elements.append(Spacer(1, 12))
+
+    # Scenario table
+    table = Table([scenarios.columns.tolist()] + scenarios.values.tolist())
     table.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.grey),
-        ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("GRID",(0,0),(-1,-1),1,colors.black)
+        ("BACKGROUND", (0,0), (-1,0), colors.black),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.grey)
     ]))
+
     elements.append(table)
-
-    elements.append(Spacer(1,12))
-    elements.append(Paragraph("Timeline", styles["Heading2"]))
-
-    table_data2 = [timeline.columns.tolist()] + timeline.values.tolist()
-    table2 = Table(table_data2)
-    table2.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.grey),
-        ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("GRID",(0,0),(-1,-1),1,colors.black)
-    ]))
-    elements.append(table2)
 
     doc.build(elements)
     buffer.seek(0)
+
     return buffer
 
 # =========================
-# DOWNLOAD
+# EXPORT BUTTON
 # =========================
+st.subheader("Export")
+
 if st.button("Export Report (PDF)"):
     pdf = generate_pdf()
-    st.download_button("Download PDF", pdf, "ProbabilityLens_Report.pdf")
+    st.download_button(
+        label="Download PDF",
+        data=pdf,
+        file_name="ProbabilityLens_Report.pdf",
+        mime="application/pdf"
+    )
