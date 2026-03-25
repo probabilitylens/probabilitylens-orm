@@ -10,7 +10,7 @@ st.set_page_config(layout="wide")
 st.markdown("""
 <style>
 
-/* Sidebar — balanced contrast */
+/* Sidebar styling */
 [data-testid="stSidebar"] {
     background-color: #0f172a;
 }
@@ -24,7 +24,7 @@ st.markdown("""
     color: #9ca3af !important;
 }
 
-/* Main spacing */
+/* Layout spacing */
 .block-container {
     padding-top: 1.5rem;
     padding-left: 3rem;
@@ -35,12 +35,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------
-# HEADER WITH LOGO
+# HEADER (FIXED LOGO HANDLING)
 # -----------------------------------
-col_logo, col_title = st.columns([1.5, 6])
+col_logo, col_title = st.columns([2, 6])
 
 with col_logo:
-    st.image("logo.png", use_container_width=True)  # ensure logo is properly cropped externally
+    st.image("logo.png", width=180)  # ensure logo is properly cropped externally
 
 with col_title:
     st.title("ProbabilityLens")
@@ -50,7 +50,7 @@ st.write(f"**LAST UPDATE:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
 st.divider()
 
 # -----------------------------------
-# SIDEBAR INPUTS
+# SIDEBAR INPUTS (ONLY SOURCE OF INPUTS)
 # -----------------------------------
 st.sidebar.header("Input Parameters")
 
@@ -63,7 +63,7 @@ health = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital Availability", 0.0, 1.0, 0.5)
 
 # -----------------------------------
-# DECISION ENGINE FUNCTION
+# DECISION ENGINE
 # -----------------------------------
 def compute_decision(signal, timing, confirmation, alignment, crowding, health, capital):
     score = (
@@ -93,31 +93,14 @@ def compute_decision(signal, timing, confirmation, alignment, crowding, health, 
 
     return score_pct, regime, action
 
-# -----------------------------------
-# CURRENT SCENARIO
-# -----------------------------------
 score_pct, regime, action = compute_decision(
     signal, timing, confirmation, alignment, crowding, health, capital
 )
 
 # -----------------------------------
-# LAYOUT
+# MAIN LAYOUT (NO DUPLICATION)
 # -----------------------------------
-col1, col2, col3 = st.columns([1.2, 1.5, 1.2])
-
-# -----------------------------------
-# INPUT STATE
-# -----------------------------------
-with col1:
-    st.subheader("INPUT STATE")
-
-    st.write(f"Signal: {signal:.2f}")
-    st.write(f"Timing: {timing:.2f}")
-    st.write(f"Confirmation: {confirmation:.2f}")
-    st.write(f"Alignment: {alignment:.2f}")
-    st.write(f"Crowding: {crowding:.2f}")
-    st.write(f"Health: {health:.2f}")
-    st.write(f"Capital: {capital:.2f}")
+col2, col3 = st.columns([1.7, 1.3])
 
 # -----------------------------------
 # SYSTEM OUTPUT
@@ -140,7 +123,9 @@ with col2:
     else:
         st.success(action)
 
-    # Decision interpretation (key upgrade)
+    # -----------------------------------
+    # DECISION INTERPRETATION
+    # -----------------------------------
     st.caption("SYSTEM INTERPRETATION")
 
     if action == "NO POSITION":
@@ -150,11 +135,36 @@ with col2:
     else:
         st.write("Conditions aligned. Incremental exposure warranted.")
 
+    # -----------------------------------
+    # DECISION RATIONALE BLOCK (NEW)
+    # -----------------------------------
+    st.caption("DECISION RATIONALE")
+
+    drivers = []
+
+    if signal < 0.5:
+        drivers.append("Weak signal strength")
+    if timing < 0.5:
+        drivers.append("Timing not active")
+    if confirmation < 0.5:
+        drivers.append("Lack of confirmation")
+    if alignment < 0.5:
+        drivers.append("Cross-market misalignment")
+    if crowding > 0.7:
+        drivers.append("Crowded positioning risk")
+
+    if not drivers:
+        drivers.append("All key conditions aligned")
+
+    for d in drivers:
+        st.write(f"- {d}")
+
 # -----------------------------------
 # CONSTRAINTS
 # -----------------------------------
 with col3:
     st.subheader("CONSTRAINTS")
+    st.caption("ACTIVE CONSTRAINTS")
 
     constraints = []
 
@@ -172,12 +182,11 @@ with col3:
         st.success("No constraints")
 
 # -----------------------------------
-# SCENARIO COMPARISON PANEL
+# SCENARIO COMPARISON
 # -----------------------------------
 st.divider()
 st.subheader("Scenario Comparison")
 
-# Define scenarios
 scenarios = {
     "Base Case": (signal, timing, confirmation, alignment, crowding, health, capital),
     "Bull Case": (0.8, 0.8, 0.8, 0.8, 0.6, 0.7, 0.7),
@@ -192,7 +201,7 @@ for name, vals in scenarios.items():
 
 df = pd.DataFrame(data, columns=["Scenario", "Score (%)", "Regime", "Action"])
 
-st.dataframe(df, use_container_width=True)
+st.table(df)
 
 # -----------------------------------
 # FOOTER
