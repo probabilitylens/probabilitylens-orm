@@ -11,26 +11,25 @@ import os
 st.set_page_config(layout="wide")
 
 # =========================
-# 🎨 REGIME COLOR SYSTEM
+# 🎨 REGIME COLOR
 # =========================
-def get_regime_color(regime):
-    if regime == "PREPARATION":
-        return "#6b7280"  # gray
-    elif regime == "DEVELOPING":
-        return "#f59e0b"  # amber
-    else:
-        return "#ef4444"  # red
+def get_color(regime):
+    return {
+        "PREPARATION": "#6b7280",
+        "DEVELOPING": "#f59e0b",
+        "NEAR TRIGGER": "#ef4444"
+    }[regime]
 
 # =========================
 # 🧭 HEADER
 # =========================
-col1, col2 = st.columns([1, 6])
+c1, c2 = st.columns([1, 6])
 
-with col1:
+with c1:
     if os.path.exists("Logo.png"):
         st.image("Logo.png", width=120)
 
-with col2:
+with c2:
     st.markdown("""
     <h1 style='margin-bottom:0;'>ProbabilityLens</h1>
     <p style='color:gray;'>Oil Risk Monitor — Decision Engine</p>
@@ -39,13 +38,32 @@ with col2:
 st.markdown("---")
 
 # =========================
-# 📥 DATA
+# 📥 DATA LOADER (FIXED)
 # =========================
-df = pd.read_excel("data/wti.xls", sheet_name="Data 1")
-df = df.iloc[:, :2]
-df.columns = ["Date", "Price"]
-df["Date"] = pd.to_datetime(df["Date"])
-df = df.dropna().sort_values("Date").tail(120)
+@st.cache_data
+def load_data():
+    df = pd.read_excel("data/wti.xls", sheet_name="Data 1")
+
+    df = df.iloc[:, :2]
+    df.columns = ["Date", "Price"]
+
+    # 🔥 CRITICAL FIX
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
+
+    # Remove garbage rows
+    df = df.dropna()
+
+    # Sort and trim
+    df = df.sort_values("Date").tail(120)
+
+    return df
+
+df = load_data()
+
+if df.empty:
+    st.error("Data failed to load properly — check Excel structure")
+    st.stop()
 
 # =========================
 # 🎛 INPUTS
@@ -80,7 +98,7 @@ conviction = int((1 - np.std(vals)) * 100)
 expected_move = (score / 100) * (alignment + signal) * 10
 
 direction = "SHORT" if signal > 0.6 else "LONG" if signal < 0.4 else "NEUTRAL"
-color = get_regime_color(regime)
+color = get_color(regime)
 
 # =========================
 # 📊 CHART
@@ -102,7 +120,7 @@ fig.update_layout(
 )
 
 # =========================
-# 🖥 UI — DECISION CARD
+# 🖥 UI
 # =========================
 left, right = st.columns([1.2, 1.8])
 
@@ -110,12 +128,7 @@ with left:
     st.markdown("## Decision")
 
     st.markdown(f"""
-    <div style="
-        padding:20px;
-        border-radius:10px;
-        background-color:{color};
-        color:white;
-    ">
+    <div style="padding:20px;border-radius:10px;background:{color};color:white;">
         <h2>{regime}</h2>
         <p><b>Action:</b> {action}</p>
         <p><b>Conviction:</b> {conviction}%</p>
@@ -135,7 +148,7 @@ with right:
     st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# 📄 PDF (REAL MEMO)
+# 📄 PDF
 # =========================
 def generate_pdf():
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
@@ -144,31 +157,21 @@ def generate_pdf():
 
     content = []
 
-    # HEADLINE
     content.append(Paragraph(f"<b>{regime} — {action}</b>", styles["Title"]))
     content.append(Spacer(1, 12))
 
-    # TRADE
-    content.append(Paragraph("<b>Trade Expression</b>", styles["Heading2"]))
     content.append(Paragraph(
-        f"Direction: {direction}<br/>Horizon: 2–6 weeks<br/>Conviction: {conviction}%",
+        f"Direction: {direction}<br/>Conviction: {conviction}%",
         styles["Normal"]
     ))
 
     content.append(Spacer(1, 12))
 
-    # NARRATIVE (NEW)
-    content.append(Paragraph("<b>Rationale</b>", styles["Heading2"]))
     content.append(Paragraph(
-        "The market is currently underestimating demand-driven downside pressure "
-        "on oil prices. Positioning remains extended, increasing the probability "
-        "of a sharp repricing.",
+        "Market is underestimating demand-driven downside pressure on oil prices.",
         styles["Normal"]
     ))
 
-    content.append(Spacer(1, 20))
-
-    # CHART
     img = "chart.png"
     fig.write_image(img)
     content.append(RLImage(img, width=500, height=300))
