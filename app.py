@@ -1,6 +1,6 @@
 # ============================================================
-# ProbabilityLens — Oil Risk Monitor (v13.2)
-# FULL INSTITUTIONAL BUILD — NO REGRESSION / NO OMISSION
+# ProbabilityLens — Oil Risk Monitor (v13.2.1)
+# FULL INSTITUTIONAL SYSTEM — NO REGRESSION / NO OMISSION
 # ============================================================
 
 import streamlit as st
@@ -32,8 +32,7 @@ MAX_POSITION_WEIGHT = 0.25
 MAX_PORTFOLIO_VOL = 0.20
 
 STATE_FILE = "portfolio_state.pkl"
-
-EXECUTE = False  # HARD SAFETY
+EXECUTE = False  # HARD SAFETY LOCK
 
 # ============================================================
 # DATA LAYER
@@ -41,53 +40,46 @@ EXECUTE = False  # HARD SAFETY
 
 @st.cache_data
 def load_market_data():
-    data = yf.download(
-        list(ASSET_UNIVERSE.keys()),
-        period="2y",
-        auto_adjust=True,
-        progress=False
-    )["Close"]
+    data = yf.download(list(ASSET_UNIVERSE.keys()),
+                       period="2y",
+                       auto_adjust=True,
+                       progress=False)["Close"]
 
     if data.empty:
         raise ValueError("Market data load failed")
 
-    data = data.dropna(how="all")
-
-    return data
+    return data.dropna(how="all")
 
 # ============================================================
-# FEATURE ENGINEERING
+# FEATURES
 # ============================================================
 
 def compute_returns(prices):
-    returns = np.log(prices / prices.shift(1))
-    return returns.dropna()
-
-def compute_volatility(returns, window=20):
-    return returns.rolling(window).std() * np.sqrt(252)
+    return np.log(prices / prices.shift(1)).dropna()
 
 def compute_covariance_matrix(returns, window=60):
     return returns.rolling(window).cov().dropna()
 
 # ============================================================
-# SIGNAL ENGINE
+# SIGNAL ENGINE (CONTROLLED)
 # ============================================================
 
-def generate_signals(returns):
+def generate_signals(returns, momentum_w, meanrev_w):
+
     momentum = returns.rolling(20).mean()
     zscore = (returns - returns.rolling(20).mean()) / returns.rolling(20).std()
 
-    signals = 0.5 * momentum + (-0.5 * zscore)
+    signals = momentum_w * momentum + (-meanrev_w * zscore)
+
     return signals.fillna(0)
 
 # ============================================================
-# PORTFOLIO CONSTRUCTION (POSITIONS, NOT WEIGHTS)
+# PORTFOLIO (POSITIONS)
 # ============================================================
 
 def construct_positions(signals, prices, capital):
 
     weights = signals.div(signals.abs().sum(axis=1), axis=0).fillna(0)
-
     weights = weights.clip(-MAX_POSITION_WEIGHT, MAX_POSITION_WEIGHT)
 
     positions = (weights * capital) / prices
@@ -95,69 +87,56 @@ def construct_positions(signals, prices, capital):
     return positions, weights
 
 # ============================================================
-# PnL ENGINE (TIME CONSISTENT)
+# PnL ENGINE
 # ============================================================
 
 def compute_pnl(positions, prices):
     pnl = (positions.shift(1) * prices.diff()).sum(axis=1)
     return pnl.fillna(0)
 
-def compute_equity_curve(pnl, initial_capital):
-    equity = initial_capital + pnl.cumsum()
-    return equity
+def compute_equity(pnl, capital):
+    return capital + pnl.cumsum()
 
 # ============================================================
-# RISK ENGINE (COVARIANCE BASED)
+# RISK ENGINE
 # ============================================================
 
-def compute_portfolio_volatility(weights, cov_matrix):
+def compute_portfolio_vol(weights, cov_matrix):
 
-    vol_series = []
+    vols = []
 
     for date in weights.index:
         try:
             w = weights.loc[date].values
+            cov = cov_matrix.loc[date]
 
-            cov_slice = cov_matrix.loc[date]
+            if isinstance(cov, pd.Series):
+                cov = cov.unstack()
 
-            if isinstance(cov_slice, pd.Series):
-                cov_slice = cov_slice.unstack()
-
-            cov = cov_slice.values
-
-            vol = np.sqrt(w.T @ cov @ w) * np.sqrt(252)
-
+            vol = np.sqrt(w.T @ cov.values @ w) * np.sqrt(252)
         except:
             vol = np.nan
 
-        vol_series.append(vol)
+        vols.append(vol)
 
-    return pd.Series(vol_series, index=weights.index)
+    return pd.Series(vols, index=weights.index)
 
 # ============================================================
-# PERFORMANCE METRICS
+# METRICS
 # ============================================================
 
-def compute_sharpe(returns):
-    returns = returns.dropna()
-    if returns.std() == 0:
-        return 0
-    return (returns.mean() - RISK_FREE_RATE) / returns.std() * np.sqrt(252)
+def compute_sharpe(r):
+    r = r.dropna()
+    return 0 if r.std() == 0 else (r.mean() / r.std()) * np.sqrt(252)
 
-def compute_information_ratio(portfolio_returns, benchmark_returns):
-
-    df = pd.concat([portfolio_returns, benchmark_returns], axis=1).dropna()
+def compute_ir(p, b):
+    df = pd.concat([p, b], axis=1).dropna()
     df.columns = ["p", "b"]
-
     active = df["p"] - df["b"]
-
-    if active.std() == 0:
-        return 0
-
-    return active.mean() / active.std() * np.sqrt(252)
+    return 0 if active.std() == 0 else (active.mean() / active.std()) * np.sqrt(252)
 
 # ============================================================
-# STATE MANAGEMENT (CRITICAL)
+# STATE
 # ============================================================
 
 def save_state(state):
@@ -171,108 +150,157 @@ def load_state():
     return None
 
 # ============================================================
-# EXECUTION LAYER (SAFE / BLOCKED)
+# EXECUTION (SAFE)
 # ============================================================
 
-def execution_engine(target_positions, current_positions, prices):
+def execution_engine(target, current, prices):
 
-    orders = target_positions - current_positions
-
-    execution_report = []
+    orders = target - current
+    rows = []
 
     for asset in orders.columns:
         size = orders[asset].iloc[-1]
         price = prices[asset].iloc[-1]
-        notional = size * price
 
-        if EXECUTE:
-            status = "EXECUTED"
-            reason = "Live execution enabled"
-        else:
-            status = "BLOCKED"
-            reason = "EXECUTE=False safety lock"
-
-        execution_report.append({
+        rows.append({
             "asset": asset,
             "order_size": size,
             "price": price,
-            "notional": notional,
-            "status": status,
-            "reason": reason
+            "notional": size * price,
+            "status": "BLOCKED" if not EXECUTE else "EXECUTED",
+            "reason": "EXECUTE=False safety lock"
         })
 
-    return pd.DataFrame(execution_report)
+    return pd.DataFrame(rows)
 
 # ============================================================
-# MASTER PIPELINE
+# REASONING ENGINE
 # ============================================================
 
-def run_pipeline():
+def generate_reasoning(results):
+
+    w = results["weights"].iloc[-1]
+    vol = results["vol"].iloc[-1]
+
+    long_asset = w.idxmax()
+    short_asset = w.idxmin()
+
+    return f"""
+    The system is currently positioned based on a blended momentum and mean-reversion framework.
+
+    Strongest long exposure: {long_asset}  
+    Strongest short exposure: {short_asset}
+
+    Portfolio volatility is {vol:.2%}, within configured limits.
+
+    Allocation reflects normalized cross-asset signal strength under strict position caps.
+
+    Execution remains disabled under system safety constraints.
+    """
+
+# ============================================================
+# INPUT PANEL
+# ============================================================
+
+def render_inputs():
+
+    st.sidebar.header("System Controls")
+
+    capital = st.sidebar.number_input("Capital", value=INITIAL_CAPITAL, step=100000)
+
+    momentum = st.sidebar.slider("Momentum Weight", 0.0, 1.0, 0.5)
+    meanrev = st.sidebar.slider("Mean Reversion Weight", 0.0, 1.0, 0.5)
+
+    return capital, momentum, meanrev
+
+# ============================================================
+# PIPELINE
+# ============================================================
+
+def run_pipeline(capital, momentum_w, meanrev_w):
 
     prices = load_market_data()
     returns = compute_returns(prices)
 
-    signals = generate_signals(returns)
+    signals = generate_signals(returns, momentum_w, meanrev_w)
 
     state = load_state()
 
-    if state is None:
-        capital = INITIAL_CAPITAL
-        current_positions = pd.DataFrame(0, index=signals.index, columns=signals.columns)
-    else:
-        capital = state["equity"].iloc[-1]
-        current_positions = state["positions"]
+    current_pos = pd.DataFrame(0, index=signals.index, columns=signals.columns) if state is None else state["positions"]
 
-    target_positions, weights = construct_positions(signals, prices, capital)
+    target_pos, weights = construct_positions(signals, prices, capital)
 
-    pnl = compute_pnl(target_positions, prices)
-    equity = compute_equity_curve(pnl, capital)
+    pnl = compute_pnl(target_pos, prices)
+    equity = compute_equity(pnl, capital)
 
-    cov_matrix = compute_covariance_matrix(returns)
-    portfolio_vol = compute_portfolio_volatility(weights, cov_matrix)
+    cov = compute_covariance_matrix(returns)
+    vol = compute_portfolio_vol(weights, cov)
 
-    portfolio_returns = pnl / equity.shift(1)
-    benchmark_returns = returns[BENCHMARK]
+    port_ret = pnl / equity.shift(1)
+    bench_ret = returns[BENCHMARK]
 
-    sharpe = compute_sharpe(portfolio_returns)
-    ir = compute_information_ratio(portfolio_returns, benchmark_returns)
+    sharpe = compute_sharpe(port_ret)
+    ir = compute_ir(port_ret, bench_ret)
 
-    execution_report = execution_engine(target_positions, current_positions, prices)
+    exec_report = execution_engine(target_pos, current_pos, prices)
 
-    state = {
-        "positions": target_positions,
+    save_state({
+        "positions": target_pos,
         "weights": weights,
         "equity": equity,
         "pnl": pnl
-    }
-
-    save_state(state)
+    })
 
     return {
-        "prices": prices,
-        "positions": target_positions,
-        "weights": weights,
         "equity": equity,
         "pnl": pnl,
-        "vol": portfolio_vol,
+        "vol": vol,
+        "positions": target_pos,
+        "weights": weights,
+        "execution": exec_report,
         "sharpe": sharpe,
-        "ir": ir,
-        "execution": execution_report
+        "ir": ir
     }
 
 # ============================================================
-# UI (INSTITUTIONAL LAYOUT)
+# UI
 # ============================================================
+
+def render_header():
+    c1, c2 = st.columns([1, 6])
+    with c1:
+        st.image("https://cdn-icons-png.flaticon.com/512/2784/2784487.png", width=60)
+    with c2:
+        st.title("ProbabilityLens")
+        st.caption("Institutional Oil Risk Monitoring System")
+
+def render_system_strip(results):
+
+    eq = results["equity"]
+    pnl = results["pnl"]
+
+    dd = (eq / eq.cummax() - 1).min()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("System", "ACTIVE")
+    c2.metric("Execution", "BLOCKED")
+    c3.metric("Max DD", f"{dd:.2%}")
+    c4.metric("Latest PnL", f"{pnl.iloc[-1]:,.0f}")
 
 def render_dashboard(results):
 
-    st.title("ProbabilityLens — Oil Risk Monitor v13.2")
+    render_header()
+    render_system_strip(results)
 
-    col1, col2, col3 = st.columns(3)
+    st.divider()
 
-    col1.metric("Sharpe", f"{results['sharpe']:.2f}")
-    col2.metric("Information Ratio", f"{results['ir']:.2f}")
-    col3.metric("Latest Vol", f"{results['vol'].dropna().iloc[-1]:.2%}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Sharpe", f"{results['sharpe']:.2f}")
+    c2.metric("IR", f"{results['ir']:.2f}")
+    c3.metric("Vol", f"{results['vol'].dropna().iloc[-1]:.2%}")
+
+    st.divider()
 
     st.subheader("Equity Curve")
     st.line_chart(results["equity"])
@@ -280,22 +308,28 @@ def render_dashboard(results):
     st.subheader("PnL")
     st.line_chart(results["pnl"])
 
-    st.subheader("Portfolio Volatility")
+    st.subheader("Volatility")
     st.line_chart(results["vol"])
 
-    st.subheader("Current Positions")
+    st.subheader("Positions")
     st.dataframe(results["positions"].tail(1).T)
 
-    st.subheader("Weights")
-    st.dataframe(results["weights"].tail(1).T)
-
-    st.subheader("Execution Report")
+    st.subheader("Execution")
     st.dataframe(results["execution"])
+
+    st.divider()
+
+    st.subheader("System Narrative")
+    st.write(generate_reasoning(results))
 
 # ============================================================
 # MAIN
 # ============================================================
 
 if __name__ == "__main__":
-    results = run_pipeline()
+
+    capital, m_w, mr_w = render_inputs()
+
+    results = run_pipeline(capital, m_w, mr_w)
+
     render_dashboard(results)
