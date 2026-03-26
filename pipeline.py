@@ -1,4 +1,4 @@
-from logging.logger import get_logs
+from plogging.logger import get_logs
 
 from data.loader import load_market_data, compute_returns
 from features.signals import generate_signals
