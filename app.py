@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 from io import BytesIO
+import requests
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
@@ -15,7 +15,7 @@ MIN_OBS = 50
 EPS = 1e-8
 
 # =========================
-# CORE: PATTERN EXTRACTION (UNIFIED)
+# CORE EXTRACTION LOGIC (UNIFIED)
 # =========================
 def extract_time_series(df):
     best_series = None
@@ -30,7 +30,6 @@ def extract_time_series(df):
             vals = pd.to_numeric(df[col_val], errors='coerce')
 
             mask = dates.notna() & vals.notna()
-
             if mask.sum() > max_len:
                 temp = pd.DataFrame({
                     "date": dates[mask],
@@ -55,16 +54,17 @@ def fetch_eia_data():
         max_len = 0
 
         for t in tables:
-            ts = extract_time_series(t)
-            if ts is not None and len(ts) > max_len:
-                best = ts
-                max_len = len(ts)
+            extracted = extract_time_series(t)
+            if extracted is not None and len(extracted) > max_len:
+                best = extracted
+                max_len = len(extracted)
 
         if best is None or len(best) < MIN_OBS:
             raise ValueError("EIA data insufficient")
 
-        best = best.drop_duplicates("date")
+        best = best.drop_duplicates("date").sort_values("date")
 
+        # HARDENING
         if not best["date"].is_monotonic_increasing:
             best = best.sort_values("date")
 
@@ -75,7 +75,7 @@ def fetch_eia_data():
 
 
 # =========================
-# DATA INGESTION (LOCAL BACKUP)
+# LOCAL BACKUP (FIXED)
 # =========================
 @st.cache_data
 def load_local():
@@ -87,17 +87,18 @@ def load_local():
 
         for sheet in xls.sheet_names:
             df = xls.parse(sheet)
-            ts = extract_time_series(df)
+            extracted = extract_time_series(df)
 
-            if ts is not None and len(ts) > max_len:
-                best = ts
-                max_len = len(ts)
+            if extracted is not None and len(extracted) > max_len:
+                best = extracted
+                max_len = len(extracted)
 
         if best is None or len(best) < MIN_OBS:
             raise ValueError("Local data insufficient")
 
-        best = best.drop_duplicates("date")
+        best = best.drop_duplicates("date").sort_values("date")
 
+        # HARDENING
         if not best["date"].is_monotonic_increasing:
             best = best.sort_values("date")
 
@@ -124,7 +125,7 @@ def compute_features(df):
     df = df.dropna()
 
     if len(df) < MIN_OBS:
-        raise ValueError("Feature layer insufficient after processing")
+        raise ValueError("Feature layer insufficient")
 
     return df
 
@@ -197,78 +198,87 @@ def compute_model(f):
 
 
 # =========================
-# SCENARIO ENGINE
+# SCENARIO ENGINE (v4)
 # =========================
-def compute_scenarios(conviction):
-    bull = max(0, 0.5 + conviction * 0.4)
-    bear = max(0, 0.5 - conviction * 0.4)
+def compute_scenarios(conviction, vol):
+    base = 0.5 + conviction * 0.3
+    bull = max(0, base)
+    bear = max(0, 1 - base)
+
+    total = bull + bear
+    bull /= total
+    bear /= total
     base = 1 - (bull + bear) * 0.5
 
-    total = bull + bear + base
     return {
-        "bull": bull / total,
-        "base": base / total,
-        "bear": bear / total
+        "bull": bull,
+        "base": base,
+        "bear": bear
     }
 
 
 # =========================
-# POSITIONING MODEL
+# POSITIONING MODEL (v4)
 # =========================
 def compute_position(conviction, vol, crowding):
-    raw = abs(conviction) / (vol + EPS)
-    adj = raw * (1 - abs(crowding))
+    raw_size = abs(conviction) / (vol + EPS)
+    adj = raw_size * (1 - abs(crowding))
 
     direction = "LONG" if conviction > 0 else "SHORT" if conviction < 0 else "FLAT"
 
-    return direction, float(np.tanh(adj))
+    return direction, np.tanh(adj)
 
 
 # =========================
 # INTERPRETATION ENGINE
 # =========================
 def interpret(f, regime, position):
-    text = []
+    narrative = []
 
     if f["signal"] > 0.7:
-        text.append("Trend strength is pronounced across time horizons.")
-
-    if f["timing"] < -0.5:
-        text.append("Entry conditions appear stretched.")
+        narrative.append("Trend strength is pronounced across time horizons.")
 
     if f["health"] == -1:
-        text.append("Volatility is elevated, reducing reliability.")
+        narrative.append("Volatility regime is elevated, reducing reliability.")
 
     if f["crowding"] < -0.5:
-        text.append("Positioning appears crowded.")
+        narrative.append("Positioning appears crowded.")
 
-    text.append(f"Recommended positioning is {position[0]} with calibrated sizing.")
+    narrative.append(f"Recommended positioning is {position[0]} with calibrated sizing.")
 
-    return " ".join(text)
+    return " ".join(narrative)
 
 
 # =========================
 # REPORT ENGINE
 # =========================
-def generate_report(regime, conviction, expected_move, scenarios, position, narrative):
+def generate_report(regime, conviction, expected_move, scenarios, position, narrative, source):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer)
     styles = getSampleStyleSheet()
 
-    def sec(t, x):
-        return [Paragraph(f"<b>{t}</b>", styles["Heading2"]),
-                Spacer(1, 10),
-                Paragraph(x, styles["BodyText"]),
-                Spacer(1, 20)]
+    def sec(title, txt):
+        return [
+            Paragraph(f"<b>{title}</b>", styles["Heading2"]),
+            Spacer(1, 10),
+            Paragraph(txt, styles["BodyText"]),
+            Spacer(1, 20)
+        ]
 
     content = []
+
     content += sec("Executive Summary",
-                   f"{regime} regime with conviction {conviction:.2f} and expected move {expected_move:.2%}.")
+        f"{regime} regime with conviction {conviction:.2f}. Expected move {expected_move:.2%}.")
+
     content += sec("Scenario Analysis",
-                   f"Bull {scenarios['bull']:.0%}, Base {scenarios['base']:.0%}, Bear {scenarios['bear']:.0%}.")
+        f"Bull: {scenarios['bull']:.0%}, Base: {scenarios['base']:.0%}, Bear: {scenarios['bear']:.0%}")
+
     content += sec("Positioning",
-                   f"{position[0]} exposure with normalized size {position[1]:.2f}.")
+        f"Direction: {position[0]}, Size (normalized): {position[1]:.2f}")
+
     content += sec("Narrative", narrative)
+
+    content += sec("Data Source", source)
 
     doc.build(content)
     buffer.seek(0)
@@ -281,6 +291,7 @@ def generate_report(regime, conviction, expected_move, scenarios, position, narr
 st.set_page_config(layout="wide")
 st.title("ProbabilityLens — Oil Risk Monitor (v4.1)")
 
+# DATA PIPELINE (WITH FALLBACK)
 df, source = fetch_eia_data()
 
 if df is None:
@@ -295,20 +306,22 @@ st.caption(f"Last Observation: {df['date'].iloc[-1].date()}")
 
 try:
     df = compute_features(df)
-    f = compute_factors(df)
-    conviction, regime, move = compute_model(f)
+    factors = compute_factors(df)
+    conviction, regime, expected_move = compute_model(factors)
 
-    scenarios = compute_scenarios(conviction)
-    position = compute_position(conviction, f["vol"], f["crowding"])
-    narrative = interpret(f, regime, position)
+    scenarios = compute_scenarios(conviction, factors["vol"])
+    position = compute_position(conviction, factors["vol"], factors["crowding"])
+    narrative = interpret(factors, regime, position)
 
+    # KPI STRIP
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Conviction", f"{conviction:.2f}")
     c2.metric("Regime", regime)
-    c3.metric("Expected Move", f"{move:.2%}")
-    c4.metric("Volatility", f"{f['vol']:.2%}")
+    c3.metric("Expected Move", f"{expected_move:.2%}")
+    c4.metric("Volatility", f"{factors['vol']:.2%}")
 
-    left, right = st.columns([2, 1])
+    # MAIN GRID
+    left, right = st.columns([2,1])
 
     with left:
         st.subheader("Decision")
@@ -319,8 +332,9 @@ try:
         st.subheader("Scenarios")
         st.bar_chart(scenarios)
 
-    pdf = generate_report(regime, conviction, move, scenarios, position, narrative)
-    st.download_button("Download Report", pdf, "ProbabilityLens_v4.1.pdf")
+    # REPORT
+    pdf = generate_report(regime, conviction, expected_move, scenarios, position, narrative, source)
+    st.download_button("Download Report", pdf, "ProbabilityLens_v4.1_Report.pdf")
 
 except Exception as e:
     st.error(f"System diagnostic: {str(e)}")
