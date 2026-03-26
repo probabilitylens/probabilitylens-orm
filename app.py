@@ -38,32 +38,14 @@ with c2:
 st.markdown("---")
 
 # =========================
-# 📥 DATA LOADER (FIXED)
+# 📥 DATA
 # =========================
-@st.cache_data
-def load_data():
-    df = pd.read_excel("data/wti.xls", sheet_name="Data 1")
-
-    df = df.iloc[:, :2]
-    df.columns = ["Date", "Price"]
-
-    # 🔥 CRITICAL FIX
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
-
-    # Remove garbage rows
-    df = df.dropna()
-
-    # Sort and trim
-    df = df.sort_values("Date").tail(120)
-
-    return df
-
-df = load_data()
-
-if df.empty:
-    st.error("Data failed to load properly — check Excel structure")
-    st.stop()
+df = pd.read_excel("data/wti.xls", sheet_name="Data 1")
+df = df.iloc[:, :2]
+df.columns = ["Date", "Price"]
+df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
+df = df.dropna().sort_values("Date").tail(120)
 
 # =========================
 # 🎛 INPUTS
@@ -73,7 +55,7 @@ st.sidebar.title("Input Parameters")
 signal = st.sidebar.slider("Signal", 0.0, 1.0, 0.3)
 timing = st.sidebar.slider("Timing", 0.0, 1.0, 0.3)
 confirmation = st.sidebar.slider("Confirmation", 0.0, 1.0, 0.3)
-alignment = st.sidebar.slider("Alignment", 0.0, 1.0, 0.3)
+alignment = st.sidebar.slider("Alignment", 0.0, 1.0, 0.58)
 crowding = st.sidebar.slider("Crowding", 0.0, 1.0, 0.5)
 market_health = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital Availability", 0.0, 1.0, 0.5)
@@ -96,28 +78,45 @@ else:
 
 conviction = int((1 - np.std(vals)) * 100)
 expected_move = (score / 100) * (alignment + signal) * 10
-
 direction = "SHORT" if signal > 0.6 else "LONG" if signal < 0.4 else "NEUTRAL"
+
 color = get_color(regime)
 
 # =========================
 # 📊 CHART
 # =========================
 fig = go.Figure()
+fig.add_trace(go.Scatter(x=df["Date"], y=df["Price"], line=dict(color="white", width=3)))
+fig.update_layout(template="plotly_dark", paper_bgcolor="#0b0f14")
 
-fig.add_trace(go.Scatter(
-    x=df["Date"],
-    y=df["Price"],
-    line=dict(color="white", width=3)
-))
+# =========================
+# 🧠 NARRATIVE ENGINE (NEW)
+# =========================
+executive = f"""
+The system is currently in a {regime} regime, indicating limited immediate trade readiness.
+While underlying signals suggest emerging directional bias, confirmation and timing remain insufficient.
+"""
 
-fig.add_vline(x=df["Date"].max(), line_color="white")
+situation = """
+Oil prices have recently accelerated higher, reflecting tightening supply expectations and resilient demand signals.
+However, macro inputs remain fragmented, with inconsistent confirmation across key indicators.
+"""
 
-fig.update_layout(
-    template="plotly_dark",
-    paper_bgcolor="#0b0f14",
-    plot_bgcolor="#0b0f14"
-)
+mispricing = """
+The market appears to be overpricing stability in current demand conditions while underestimating potential volatility in forward expectations.
+"""
+
+mechanism = """
+As alignment improves and confirmation signals strengthen, positioning imbalances are likely to unwind, creating asymmetric price moves.
+"""
+
+positioning = """
+Current positioning remains moderately extended, increasing sensitivity to shifts in macro expectations.
+"""
+
+conclusion = f"""
+Given the current configuration, the optimal stance remains {action}, with readiness still developing rather than actionable.
+"""
 
 # =========================
 # 🖥 UI
@@ -148,7 +147,7 @@ with right:
     st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# 📄 PDF
+# 📄 PDF — REAL REPORT
 # =========================
 def generate_pdf():
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
@@ -157,23 +156,40 @@ def generate_pdf():
 
     content = []
 
-    content.append(Paragraph(f"<b>{regime} — {action}</b>", styles["Title"]))
-    content.append(Spacer(1, 12))
+    content.append(Paragraph("<b>Executive Summary</b>", styles["Heading2"]))
+    content.append(Paragraph(executive, styles["Normal"]))
 
+    content.append(Spacer(1, 10))
+    content.append(Paragraph("<b>Situation</b>", styles["Heading2"]))
+    content.append(Paragraph(situation, styles["Normal"]))
+
+    content.append(Spacer(1, 10))
+    content.append(Paragraph("<b>Market Mispricing</b>", styles["Heading2"]))
+    content.append(Paragraph(mispricing, styles["Normal"]))
+
+    content.append(Spacer(1, 10))
+    content.append(Paragraph("<b>Mechanism</b>", styles["Heading2"]))
+    content.append(Paragraph(mechanism, styles["Normal"]))
+
+    content.append(Spacer(1, 10))
+    content.append(Paragraph("<b>Positioning</b>", styles["Heading2"]))
+    content.append(Paragraph(positioning, styles["Normal"]))
+
+    content.append(Spacer(1, 10))
+    content.append(Paragraph("<b>Trade Expression</b>", styles["Heading2"]))
     content.append(Paragraph(
         f"Direction: {direction}<br/>Conviction: {conviction}%",
         styles["Normal"]
     ))
 
-    content.append(Spacer(1, 12))
+    content.append(Spacer(1, 10))
+    content.append(Paragraph("<b>Conclusion</b>", styles["Heading2"]))
+    content.append(Paragraph(conclusion, styles["Normal"]))
 
-    content.append(Paragraph(
-        "Market is underestimating demand-driven downside pressure on oil prices.",
-        styles["Normal"]
-    ))
-
+    # chart
     img = "chart.png"
     fig.write_image(img)
+    content.append(Spacer(1, 20))
     content.append(RLImage(img, width=500, height=300))
 
     doc.build(content)
