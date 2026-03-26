@@ -1,7 +1,7 @@
 import yfinance as yf
 import numpy as np
 from config.settings import *
-from logging.logger import log
+from plogging.logger import log
 from data.validator import validate_prices, validate_returns
 
 def load_market_data():
