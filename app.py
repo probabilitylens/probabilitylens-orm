@@ -14,35 +14,52 @@ from reportlab.lib.pagesizes import letter
 st.set_page_config(layout="wide")
 
 # =========================
-# DATA LOADER (ROBUST)
+# ROBUST DATA LOADER
 # =========================
 @st.cache_data
 def load_wti():
     try:
-        df = pd.read_excel("data/wti.xls", sheet_name=0, header=None)
+        raw = pd.read_excel("data/wti.xls", sheet_name=0, header=None)
 
-        # find header row dynamically
+        # Detect header row
         header_row = None
-        for i in range(20):
-            row = df.iloc[i].astype(str).str.lower()
-            if row.str.contains("date").any() and row.str.contains("price|value").any():
+        for i in range(min(30, len(raw))):
+            row = raw.iloc[i].astype(str).str.lower()
+            if row.str.contains("date").any() and row.str.contains("price|value|close").any():
                 header_row = i
                 break
 
         if header_row is None:
-            raise Exception("Header row not found")
+            raise Exception("Header row not detected")
 
         df = pd.read_excel("data/wti.xls", sheet_name=0, header=header_row)
-        df = df.iloc[:, :2]
+
+        cols = df.columns.astype(str).str.lower()
+
+        date_col = None
+        price_col = None
+
+        for c in cols:
+            if "date" in c:
+                date_col = c
+            if any(x in c for x in ["price", "value", "close"]):
+                price_col = c
+
+        if date_col is None or price_col is None:
+            raise Exception("Date/Price columns not found")
+
+        df = df[[date_col, price_col]]
         df.columns = ["Date", "Price"]
 
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
 
-        df = df.dropna().sort_values("Date").tail(120)
+        df = df.dropna()
 
-        if df.empty:
-            raise Exception("WTI dataset empty")
+        if len(df) < 10:
+            raise Exception("Too few valid rows after cleaning")
+
+        df = df.sort_values("Date").tail(120)
 
         return df
 
@@ -52,6 +69,10 @@ def load_wti():
 
 
 df = load_wti()
+
+if df.empty:
+    st.error("WTI dataset empty after parsing")
+    st.stop()
 
 # =========================
 # INPUTS
@@ -83,12 +104,12 @@ conviction = int((1 - np.std(vals)) * 100)
 expected_move = (score / 100) * (alignment + signal) * 10
 
 # =========================
-# INTERPRETATION ENGINE
+# INTERPRETATION
 # =========================
-def interpret(x, low, mid):
-    if x < low:
+def interpret(x):
+    if x < 0.3:
         return "weak"
-    elif x < mid:
+    elif x < 0.7:
         return "building"
     else:
         return "strong"
@@ -98,93 +119,77 @@ def interpret(x, low, mid):
 # =========================
 def generate_report():
 
-    report = {}
-
-    # HEADER
-    report["header"] = {
-        "date": str(datetime.today().date()),
-        "regime": regime,
-        "action": action,
-        "conviction": conviction,
-        "expected_move": round(expected_move, 1)
-    }
-
-    # EXECUTIVE SUMMARY
-    report["executive_summary"] = (
-        f"The system is currently in a {regime.lower()} regime, with a composite score of {round(score,1)}. "
-        f"Market signals remain {interpret(signal,0.3,0.7)} while alignment is {interpret(alignment,0.3,0.7)}, "
-        f"indicating incomplete structural coherence. As a result, the model recommends {action.lower()}, "
-        f"as current conditions do not yet justify capital deployment despite emerging directional bias."
-    )
-
-    # MARKET STATE
     trend = "uptrend" if df["Price"].iloc[-1] > df["Price"].iloc[0] else "range-bound"
-    report["market_state"] = (
-        f"WTI prices are currently in a {trend} over the observed window, with recent acceleration evident. "
-        f"Volatility remains contained, and price behavior reflects gradual repricing rather than disorderly moves."
-    )
 
-    # SIGNAL DIAGNOSTICS
-    report["signal_diagnostics"] = {
-        "Signal": interpret(signal,0.3,0.7),
-        "Timing": interpret(timing,0.3,0.7),
-        "Confirmation": interpret(confirmation,0.3,0.7),
-        "Alignment": interpret(alignment,0.3,0.7),
-        "Crowding": interpret(crowding,0.3,0.7),
-        "Market Health": interpret(market_health,0.3,0.7),
-        "Capital": interpret(capital,0.3,0.7)
+    report = {
+        "header": {
+            "date": str(datetime.today().date()),
+            "regime": regime,
+            "action": action,
+            "conviction": conviction,
+            "expected_move": round(expected_move, 1)
+        },
+
+        "executive_summary": (
+            f"The system is in a {regime.lower()} regime with a composite score of {round(score,1)}. "
+            f"Signals remain {interpret(signal)} and alignment is {interpret(alignment)}, indicating incomplete structure. "
+            f"As a result, the model recommends {action.lower()} as current conditions do not yet justify deployment."
+        ),
+
+        "market_state": (
+            f"WTI prices are in a {trend}, with recent acceleration visible. "
+            f"Volatility remains contained and price action reflects controlled repricing."
+        ),
+
+        "signal_diagnostics": {
+            "Signal": interpret(signal),
+            "Timing": interpret(timing),
+            "Confirmation": interpret(confirmation),
+            "Alignment": interpret(alignment),
+            "Crowding": interpret(crowding),
+            "Market Health": interpret(market_health),
+            "Capital": interpret(capital)
+        },
+
+        "mispricing": (
+            "The market appears to be pricing continuation without fully incorporating improving structural alignment, "
+            "creating a gap between observed signals and implied expectations."
+        ),
+
+        "mechanism": (
+            "Improvement in confirmation and alignment would trigger repricing, as participants adjust positioning to stronger signals."
+        ),
+
+        "positioning": (
+            "Positioning is neutral, indicating limited forced flows and absence of extreme crowding."
+        ),
+
+        "scenarios": pd.DataFrame({
+            "Scenario": ["Base", "Bull", "Bear"],
+            "Probability": [0.5, 0.25, 0.25],
+            "Move": [
+                f"+{round(expected_move,1)}%",
+                f"+{round(expected_move*2,1)}%",
+                f"-{round(expected_move*1.5,1)}%"
+            ]
+        }),
+
+        "trade": {
+            "Direction": "LONG",
+            "Entry": "Confirmation + alignment > 0.7",
+            "Horizon": "2–6 weeks",
+            "Risk": "Signal deterioration"
+        },
+
+        "decision_logic": (
+            f"The system outputs {action} because the composite score of {round(score,1)} "
+            "remains below the activation threshold required for capital deployment."
+        ),
+
+        "conclusion": (
+            "Current conditions reflect early-stage development. Monitoring improvements in alignment and confirmation remains critical."
+        )
     }
-
-    # MISPRICING
-    report["mispricing"] = (
-        "The market appears to be pricing a continuation of current conditions without fully incorporating "
-        "the potential for structural shifts in alignment and signal reinforcement. This creates a gap between "
-        "observed data and implied expectations."
-    )
-
-    # MECHANISM
-    report["mechanism"] = (
-        "A transition toward stronger alignment and confirmation would trigger a repricing process, "
-        "as participants adjust positioning in response to improving signal clarity."
-    )
-
-    # POSITIONING
-    report["positioning"] = (
-        "Positioning appears neutral, with no evidence of extreme crowding. This suggests limited forced flows "
-        "but also a lack of urgency among participants."
-    )
-
-    # SCENARIOS
-    report["scenarios"] = pd.DataFrame({
-        "Scenario": ["Base", "Bull", "Bear"],
-        "Probability": [0.5, 0.25, 0.25],
-        "Move": [
-            f"+{round(expected_move,1)}%",
-            f"+{round(expected_move*2,1)}%",
-            f"-{round(expected_move*1.5,1)}%"
-        ]
-    })
-
-    # TRADE
-    report["trade"] = {
-        "direction": "LONG",
-        "entry": "Upon confirmation + alignment > 0.7",
-        "horizon": "2–6 weeks",
-        "risk": "Signal deterioration"
-    }
-
-    # DECISION LOGIC
-    report["decision_logic"] = (
-        f"The system outputs {action} because the composite score of {round(score,1)} does not exceed "
-        "the activation threshold required for deployment. While directional bias is emerging, confirmation "
-        "and alignment remain insufficient."
-    )
-
-    # CONCLUSION
-    report["conclusion"] = (
-        "The current environment reflects early-stage conditions that may evolve into a tradable setup, "
-        "but patience remains required. Monitoring for improvements in alignment and confirmation is critical."
-    )
 
     return report
 
@@ -199,7 +204,7 @@ fig.add_trace(go.Scatter(x=df["Date"], y=df["Price"], line=dict(width=3)))
 fig.update_layout(template="plotly_dark", height=500)
 
 # =========================
-# UI — FULL STRUCTURE
+# UI
 # =========================
 
 # HEADER
@@ -223,7 +228,8 @@ col3, col4 = st.columns(2)
 
 with col3:
     st.subheader("Trade Expression")
-    st.write(report["trade"])
+    for k, v in report["trade"].items():
+        st.write(f"{k}: {v}")
 
 with col4:
     st.subheader("Signal Diagnostics")
@@ -234,18 +240,30 @@ with col4:
 st.subheader("Executive Summary")
 st.write(report["executive_summary"])
 
+st.subheader("Market State")
+st.write(report["market_state"])
+
 st.subheader("Mispricing")
 st.write(report["mispricing"])
 
 st.subheader("Mechanism")
 st.write(report["mechanism"])
 
+st.subheader("Positioning")
+st.write(report["positioning"])
+
+st.subheader("Decision Logic")
+st.write(report["decision_logic"])
+
+st.subheader("Conclusion")
+st.write(report["conclusion"])
+
 # SCENARIOS
 st.subheader("Scenario Analysis")
 st.dataframe(report["scenarios"])
 
 # =========================
-# PDF ENGINE (FULL)
+# PDF
 # =========================
 def build_pdf(report):
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
