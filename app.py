@@ -2,22 +2,23 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 import io
 
 st.set_page_config(layout="wide")
 
 # =========================================================
-# DATA LOADER (HARDENED — NO FAILURES)
+# DATA LOADER — FINAL (COLUMN DETECTION ENGINE)
 # =========================================================
 @st.cache_data
 def load_wti():
     try:
         raw = pd.read_excel("data/wti.xls", header=None)
 
-        # detect first valid date row
         start = None
+
+        # find first valid date row
         for i in range(len(raw)):
             try:
                 pd.to_datetime(raw.iloc[i, 0])
@@ -27,9 +28,23 @@ def load_wti():
                 continue
 
         if start is None:
-            raise Exception("No valid date row found")
+            raise Exception("No date column detected")
 
-        df = raw.iloc[start:, :2].copy()
+        df = raw.iloc[start:].reset_index(drop=True)
+
+        # detect price column dynamically
+        price_col = None
+
+        for col in range(1, min(6, df.shape[1])):  # scan first few cols
+            test = pd.to_numeric(df.iloc[:, col], errors="coerce")
+            if test.notna().sum() > 20:
+                price_col = col
+                break
+
+        if price_col is None:
+            raise Exception("No numeric price column detected")
+
+        df = df.iloc[:, [0, price_col]]
         df.columns = ["Date", "Price"]
 
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -38,7 +53,7 @@ def load_wti():
         df = df.dropna()
 
         if len(df) < 20:
-            raise Exception("Dataset too small after parsing")
+            raise Exception("Parsed dataset too small — check Excel structure")
 
         df = df.sort_values("Date").tail(120)
 
@@ -52,7 +67,7 @@ def load_wti():
 df = load_wti()
 
 # =========================================================
-# SIDEBAR INPUTS
+# INPUTS
 # =========================================================
 st.sidebar.title("Inputs")
 
@@ -65,35 +80,16 @@ market = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital", 0.0, 1.0, 0.5)
 
 # =========================================================
-# CORE MODEL
+# MODEL
 # =========================================================
-factors = {
-    "Signal": signal,
-    "Timing": timing,
-    "Confirmation": confirmation,
-    "Alignment": alignment,
-    "Crowding": crowding,
-    "Market": market,
-    "Capital": capital,
-}
-
-weights = np.array([1,1,1,1,1,1,1])
-scores = np.array(list(factors.values()))
-
-conviction = np.dot(scores, weights) / weights.sum()
+factors = np.array([signal, timing, confirmation, alignment, crowding, market, capital])
+conviction = factors.mean()
 
 returns = df["Price"].pct_change().dropna()
 vol = returns.std() * np.sqrt(252)
 
-# volatility regime
-if vol < 0.2:
-    vol_regime = "LOW VOL"
-elif vol < 0.4:
-    vol_regime = "NORMAL VOL"
-else:
-    vol_regime = "HIGH VOL"
+vol_regime = "LOW" if vol < 0.2 else "NORMAL" if vol < 0.4 else "HIGH"
 
-# positioning proxy
 trend = df["Price"].iloc[-1] / df["Price"].iloc[0] - 1
 positioning = "CROWDED LONG" if trend > 0.15 else "NEUTRAL"
 
@@ -103,44 +99,37 @@ regime = "PREPARATION" if conviction < 0.6 else "ACTIVE"
 action = "NO POSITION" if conviction < 0.6 else "ENTER TRADE"
 
 # =========================================================
-# HEADER (PROPER DASHBOARD STYLE)
+# UI
 # =========================================================
-col1, col2 = st.columns([1,5])
+col_logo, col_title = st.columns([1,5])
 
-with col1:
+with col_logo:
     try:
         st.image("Logo.png", width=120)
     except:
         pass
 
-with col2:
-    st.markdown("# ProbabilityLens")
-    st.markdown("### Oil Risk Monitor — Institutional Decision System")
+with col_title:
+    st.title("ProbabilityLens")
+    st.caption("Oil Risk Monitor — Institutional Decision Engine")
 
 st.divider()
 
-# =========================================================
-# TOP METRICS ROW
-# =========================================================
+# metrics
 m1, m2, m3, m4 = st.columns(4)
-
 m1.metric("Conviction", f"{round(conviction*100)}%")
-m2.metric("Expected Move (10d)", f"{round(expected_move*100,2)}%")
-m3.metric("Volatility Regime", vol_regime)
+m2.metric("Expected Move", f"{round(expected_move*100,2)}%")
+m3.metric("Vol Regime", vol_regime)
 m4.metric("Positioning", positioning)
 
-# =========================================================
-# MAIN GRID
-# =========================================================
 left, right = st.columns([1,1])
 
-# ---------------- LEFT PANEL ----------------
+# LEFT
 with left:
-
-    st.markdown("## Decision")
+    st.subheader("Decision")
 
     st.markdown(f"""
-    <div style="background:#374151;padding:25px;border-radius:12px;color:white">
+    <div style="background:#374151;padding:25px;border-radius:10px;color:white">
         <h2>{regime}</h2>
         <p><b>Action:</b> {action}</p>
         <p><b>Conviction:</b> {round(conviction*100)}%</p>
@@ -148,95 +137,39 @@ with left:
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("## Trade Expression")
-    st.write(f"Direction: LONG")
-    st.write(f"Horizon: 2–6 weeks")
-    st.write(f"Entry: Alignment > 0.7 & Confirmation improving")
-    st.write(f"Risk: Signal deterioration")
+    st.subheader("Trade Expression")
+    st.write("Direction: LONG")
+    st.write("Horizon: 2–6 weeks")
 
-    st.markdown("## Factor Decomposition")
+    st.subheader("Factor Decomposition")
+    st.dataframe(pd.DataFrame({
+        "Factor":["Signal","Timing","Confirmation","Alignment","Crowding","Market","Capital"],
+        "Score":factors
+    }), use_container_width=True)
 
-    factor_df = pd.DataFrame({
-        "Factor": list(factors.keys()),
-        "Score": list(factors.values()),
-        "Contribution": scores / scores.sum()
-    })
-
-    st.dataframe(factor_df, use_container_width=True)
-
-    st.markdown("## Scenario Analysis")
-
-    scenarios = pd.DataFrame({
-        "Scenario":["Base","Bull","Bear"],
-        "Probability":[0.5,0.25,0.25],
-        "Move":["+3%","+8%","-5%"]
-    })
-
-    st.dataframe(scenarios, use_container_width=True)
-
-# ---------------- RIGHT PANEL ----------------
+# RIGHT
 with right:
-
-    st.markdown("## WTI Price")
+    st.subheader("WTI Price")
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df["Date"],
-        y=df["Price"],
-        line=dict(width=2)
-    ))
-
+    fig.add_trace(go.Scatter(x=df["Date"], y=df["Price"]))
     fig.update_layout(height=450)
+
     st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("## Signal Diagnostics")
-
-    st.write(f"Signal: {'Weak' if signal<0.5 else 'Strong'}")
-    st.write(f"Timing: {'Early' if timing<0.5 else 'Mature'}")
-    st.write(f"Confirmation: {'Low' if confirmation<0.5 else 'High'}")
-    st.write(f"Alignment: {'Fragmented' if alignment<0.6 else 'Aligned'}")
-
 # =========================================================
-# INSTITUTIONAL REPORT ENGINE (MULTI-PAGE)
+# REPORT (REAL TEXT)
 # =========================================================
 def build_report():
+    return f"""
+Oil Market Report
 
-    report = f"""
-Executive Summary
+The market is currently in a {regime.lower()} regime with conviction at {round(conviction*100)}%.
 
-The oil market is currently in a {regime.lower()} regime with conviction at {round(conviction*100)}%. 
-Market conditions reflect incomplete confirmation despite improving structural alignment.
+Volatility is {vol_regime.lower()}, and positioning appears {positioning.lower()}.
 
-Market Context
-
-Recent price dynamics show a trend of {round(trend*100,2)}% over the observation window. 
-Volatility regime is classified as {vol_regime}, suggesting {'contained' if vol<0.3 else 'elevated'} risk conditions.
-
-Factor Analysis
-
-Signal strength remains {'weak' if signal<0.5 else 'constructive'}, while timing is {'early' if timing<0.5 else 'advanced'}.
-Confirmation remains {'insufficient' if confirmation<0.5 else 'supportive'}, limiting conviction expansion.
-
-Positioning & Risk
-
-Positioning appears {positioning.lower()}, indicating {'potential overcrowding risk' if positioning!='NEUTRAL' else 'balanced flows'}.
-
-Trade Implications
-
-Given the current configuration, the optimal approach is to maintain optionality and wait for improved confirmation.
-
-Decision
-
-Regime: {regime}
-Action: {action}
-
-Conclusion
-
-The system does not yet justify aggressive positioning. Monitoring for confirmation remains critical.
+Signals remain incomplete, suggesting patience is required before deploying capital.
 """
-
-    return report
-
 
 def generate_pdf():
     buffer = io.BytesIO()
@@ -244,22 +177,17 @@ def generate_pdf():
     styles = getSampleStyleSheet()
 
     content = []
-
     for line in build_report().split("\n"):
         content.append(Paragraph(line, styles["Normal"]))
-        content.append(Spacer(1, 12))
+        content.append(Spacer(1,10))
 
     doc.build(content)
     buffer.seek(0)
-
     return buffer
 
-
-pdf = generate_pdf()
-
 st.download_button(
-    "Download Full Institutional Report",
-    pdf,
-    "Oil_Report.pdf",
+    "Download Report",
+    generate_pdf(),
+    "report.pdf",
     "application/pdf"
 )
