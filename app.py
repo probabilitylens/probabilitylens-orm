@@ -1,394 +1,245 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from io import BytesIO
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
 import yfinance as yf
+import requests
+import time
+import random
 
 # =========================
 # CONFIG
 # =========================
-EIA_URL = "https://www.eia.gov/dnav/pet/hist/RWTCD.htm"
-DEFAULT_DATA_PATH = "data/wti.xls"
-MIN_OBS = 50
 EPS = 1e-8
+MIN_OBS = 50
+
+# RISK CONFIG (v9)
+MAX_POSITION_SIZE = 0.25
+MAX_PORTFOLIO_VOL = 0.20
+MAX_DRAWDOWN = -0.15
+STOP_LOSS_THRESHOLD = -0.05
+KILL_SWITCH = False
+
+# BROKER (v8)
+ALPACA_KEY = "YOUR_API_KEY"
+ALPACA_SECRET = "YOUR_SECRET"
+BASE_URL = "https://paper-api.alpaca.markets"
+EXECUTE = False
 
 # =========================
-# CORE EXTRACTION LOGIC
+# DATA (v1-v4)
 # =========================
 def extract_time_series(df):
-    best_series, max_len = None, 0
-
-    for col_date in df.columns:
-        dates = pd.to_datetime(df[col_date], errors='coerce')
-        if dates.notna().sum() < 10:
+    best, max_len = None, 0
+    for c1 in df.columns:
+        d = pd.to_datetime(df[c1], errors='coerce')
+        if d.notna().sum() < 10:
             continue
-
-        for col_val in df.columns:
-            vals = pd.to_numeric(df[col_val], errors='coerce')
-            mask = dates.notna() & vals.notna()
-
-            if mask.sum() > max_len:
-                temp = pd.DataFrame({
-                    "date": dates[mask],
-                    "price": vals[mask]
-                }).sort_values("date")
-
-                best_series, max_len = temp, len(temp)
-
-    return best_series
-
-# =========================
-# DATA INGESTION
-# =========================
-@st.cache_data(ttl=86400)
-def fetch_eia_data():
-    try:
-        tables = pd.read_html(EIA_URL)
-        best, max_len = None, 0
-
-        for t in tables:
-            extracted = extract_time_series(t)
-            if extracted is not None and len(extracted) > max_len:
-                best, max_len = extracted, len(extracted)
-
-        if best is None or len(best) < MIN_OBS:
-            raise ValueError("EIA insufficient")
-
-        best = best.drop_duplicates("date").sort_values("date")
-
-        return best.reset_index(drop=True), "EIA Live"
-
-    except Exception as e:
-        return None, f"EIA failed: {str(e)}"
-
+        for c2 in df.columns:
+            v = pd.to_numeric(df[c2], errors='coerce')
+            m = d.notna() & v.notna()
+            if m.sum() > max_len:
+                best = pd.DataFrame({"date": d[m], "price": v[m]}).sort_values("date")
+                max_len = len(best)
+    return best
 
 @st.cache_data
-def load_local():
-    try:
-        xls = pd.ExcelFile(DEFAULT_DATA_PATH)
-        best, max_len = None, 0
-
-        for sheet in xls.sheet_names:
-            df = xls.parse(sheet)
-            extracted = extract_time_series(df)
-
-            if extracted is not None and len(extracted) > max_len:
-                best, max_len = extracted, len(extracted)
-
-        if best is None or len(best) < MIN_OBS:
-            raise ValueError("Local insufficient")
-
-        return best.reset_index(drop=True), "Local Backup"
-
-    except Exception as e:
-        return None, f"Local failed: {str(e)}"
-
-# =========================
-# FEATURE ENGINE
-# =========================
-def compute_features(df):
-    df = df.copy()
-
-    df["returns"] = np.log(df["price"] / df["price"].shift(1))
-    df["vol_20"] = df["returns"].rolling(20).std() * np.sqrt(252)
-    df["trend_20"] = df["price"] / df["price"].rolling(20).mean() - 1
-    df["trend_60"] = df["price"] / df["price"].rolling(60).mean() - 1
-    df["momentum_20"] = df["price"].pct_change(20)
-
-    df["zscore"] = (df["returns"] - df["returns"].mean()) / (df["returns"].std() + EPS)
-
-    df = df.dropna()
-
-    if len(df) < MIN_OBS:
-        raise ValueError("Feature insufficient")
-
+def load_data():
+    df = yf.download("CL=F", period="5y", progress=False)
+    df = df.reset_index()[["Date", "Close"]]
+    df.columns = ["date", "price"]
     return df
 
 # =========================
-# FACTOR ENGINE
+# FEATURES (v3)
+# =========================
+def compute_features(df):
+    df["returns"] = np.log(df["price"] / df["price"].shift(1))
+    df["vol_20"] = df["returns"].rolling(20).std() * np.sqrt(252)
+    df["trend_20"] = df["price"]/df["price"].rolling(20).mean() - 1
+    df["trend_60"] = df["price"]/df["price"].rolling(60).mean() - 1
+    df["momentum_20"] = df["price"].pct_change(20)
+    df["zscore"] = (df["returns"]-df["returns"].mean())/(df["returns"].std()+EPS)
+    return df.dropna()
+
+# =========================
+# FACTORS (v3)
 # =========================
 def compute_factors(df):
-    last = df.iloc[-1]
-
-    signal = np.tanh(2 * last["trend_20"] + last["trend_60"])
-    timing = np.clip(-abs(last["zscore"]), -1, 1)
-
-    confirmation = np.mean(np.sign([
-        last["trend_20"],
-        last["momentum_20"],
-        last["returns"]
-    ]))
-
-    alignment = 1 if np.sign(last["trend_20"]) == np.sign(last["trend_60"]) else -1
-    crowding = -np.tanh(last["zscore"])
-
-    vol = last["vol_20"]
-    q_low = df["vol_20"].quantile(0.3)
-    q_high = df["vol_20"].quantile(0.7)
-
-    health = 1 if vol < q_low else -1 if vol > q_high else 0
-    capital = np.tanh(signal / (vol + EPS))
-
+    l = df.iloc[-1]
     return {
-        "signal": signal,
-        "timing": timing,
-        "confirmation": confirmation,
-        "alignment": alignment,
-        "crowding": crowding,
-        "health": health,
-        "capital": capital,
-        "vol": vol
+        "signal": np.tanh(2*l["trend_20"]+l["trend_60"]),
+        "timing": np.clip(-abs(l["zscore"]),-1,1),
+        "confirmation": np.mean(np.sign([l["trend_20"],l["momentum_20"],l["returns"]])),
+        "alignment": 1 if np.sign(l["trend_20"])==np.sign(l["trend_60"]) else -1,
+        "crowding": -np.tanh(l["zscore"]),
+        "health": 0,
+        "capital": np.tanh(l["trend_20"]/(l["vol_20"]+EPS)),
+        "vol": l["vol_20"]
     }
 
 # =========================
-# MODEL ENGINE
+# MODEL (v3)
 # =========================
 def compute_model(f):
-    weights = {
-        "signal": 0.25,
-        "timing": 0.15,
-        "confirmation": 0.15,
-        "alignment": 0.10,
-        "crowding": 0.10,
-        "health": 0.15,
-        "capital": 0.10
-    }
-
-    conviction = sum(f[k] * weights[k] for k in weights)
-
-    if conviction > 0.6:
-        regime = "ACTIVE LONG"
-    elif conviction < -0.6:
-        regime = "ACTIVE SHORT"
-    elif abs(conviction) < 0.3:
-        regime = "NEUTRAL"
-    else:
-        regime = "TRANSITION"
-
-    expected_move = conviction * f["vol"] * np.sqrt(5)
-
-    return conviction, regime, expected_move
+    w = dict(signal=.25,timing=.15,confirmation=.15,alignment=.1,crowding=.1,health=.15,capital=.1)
+    c = sum(f[k]*w[k] for k in w)
+    regime = "ACTIVE LONG" if c>0.6 else "ACTIVE SHORT" if c<-0.6 else "NEUTRAL"
+    return c, regime
 
 # =========================
-# v5 EXTENSIONS
+# FORWARD + MACRO (v5)
 # =========================
 def forward_signal(df):
-    returns = df["returns"]
-    short_trend = np.sign(df["trend_20"].iloc[-1])
-    persistence = np.mean(np.sign(returns.tail(10)) == short_trend)
-    drift = returns.tail(20).mean()
-    return np.clip(0.6*persistence + 0.4*np.tanh(drift*50), -1, 1)
-
+    r=df["returns"]
+    return np.clip(0.6*np.mean(np.sign(r.tail(10))==np.sign(df["trend_20"].iloc[-1]))+
+                   0.4*np.tanh(r.tail(20).mean()*50),-1,1)
 
 def macro_regime(df):
-    vol = df["vol_20"].iloc[-1]
-    trend = df["trend_60"].iloc[-1]
-
-    if vol > df["vol_20"].quantile(0.75):
-        return "STRESS"
-    if trend > 0:
-        return "EXPANSION"
-    if trend < 0:
-        return "SLOWDOWN"
-    return "NEUTRAL"
-
-
-def adjust_for_macro(conviction, regime):
-    if regime == "STRESS": return conviction * 0.6
-    if regime == "EXPANSION": return conviction * 1.2
-    if regime == "SLOWDOWN": return conviction * 0.8
-    return conviction
-
-
-def trade_structure(conviction, vol):
-    abs_c = abs(conviction)
-
-    if abs_c < 0.3:
-        return "No Trade / Optionality"
-    if abs_c > 0.7 and vol < 0.3:
-        return "Futures / Linear"
-    if vol > 0.5:
-        return "Long Vol (Straddle)"
-    return "Call Spread" if conviction > 0 else "Put Spread"
+    v=df["vol_20"].iloc[-1]
+    if v>0.3: return "STRESS"
+    if v<0.1: return "LOW VOL"
+    return "NORMAL"
 
 # =========================
-# CROSS-ASSET ENGINE (v6)
+# STRATEGIES (v10)
 # =========================
-@st.cache_data(ttl=86400)
-def fetch_cross_assets():
-    tickers = {
-        "DXY": "DX-Y.NYB",
-        "SPX": "^GSPC",
-        "TNX": "^TNX"
+def strategy_trend(df): return compute_model(compute_factors(df))[0]
+def strategy_mr(df): return -np.tanh(df["zscore"].iloc[-1])
+def strategy_breakout(df):
+    p=df["price"].iloc[-1]
+    hi=df["price"].rolling(20).max().iloc[-1]
+    lo=df["price"].rolling(20).min().iloc[-1]
+    return 1 if p>=hi else -1 if p<=lo else 0
+
+def strategy_signals(df):
+    return {
+        "trend": strategy_trend(df),
+        "mean_reversion": strategy_mr(df),
+        "breakout": strategy_breakout(df)
     }
 
-    data = {}
-    for name, ticker in tickers.items():
-        df = yf.download(ticker, period="2y", progress=False)
-        if df is None or df.empty:
-            continue
+# =========================
+# ALLOCATION (v6+v10)
+# =========================
+def allocate_strategies(s):
+    w={k:abs(v) for k,v in s.items()}
+    tot=sum(w.values())+EPS
+    return {k:v/tot for k,v in w.items()}
 
-        df = df.reset_index()[["Date", "Close"]]
-        df.columns = ["date", "price"]
-        df["returns"] = np.log(df["price"] / df["price"].shift(1))
-        data[name] = df.dropna()
-
-    return data
-
-
-def compute_correlations(oil_df, cross_data):
-    correlations = {}
-    for name, df in cross_data.items():
-        merged = pd.merge(oil_df, df, on="date", suffixes=("_oil","_x"))
-        if len(merged) > 20:
-            correlations[name] = merged["returns_oil"].corr(merged["returns_x"])
-    return correlations
-
-
-def cross_asset_signals(cross_data):
-    signals = {}
-    for name, df in cross_data.items():
-        trend = df["price"].iloc[-1] / df["price"].rolling(20).mean().iloc[-1] - 1
-        signals[name] = np.tanh(trend * 3)
-    return signals
-
-
-def portfolio_allocation(oil_conviction, cross_signals, correlations):
-    weights = {"OIL": abs(oil_conviction)}
-
-    for k in cross_signals:
-        corr = correlations.get(k, 0)
-        weights[k] = abs(cross_signals[k]) * (1 - abs(corr))
-
-    total = sum(weights.values()) + EPS
-    return {k: v/total for k,v in weights.items()}
+def portfolio_allocation(c):
+    return {"OIL": abs(c)}
 
 # =========================
-# EXECUTION ENGINE (v7)
+# RISK ENGINE (v9)
 # =========================
-def generate_positions(portfolio, price):
-    positions = {}
-    for asset, w in portfolio.items():
-        positions[asset] = w/price if asset=="OIL" else w
-    return positions
+def risk_engine(p, vol, pnl):
+    if KILL_SWITCH:
+        return {}, "KILL"
+    if pnl.tail(5).sum() < STOP_LOSS_THRESHOLD:
+        return {}, "STOP"
+    p={k:min(v,MAX_POSITION_SIZE) for k,v in p.items()}
+    return p,"OK"
 
+# =========================
+# EXECUTION (v8)
+# =========================
+def place_order(symbol, qty):
+    if not EXECUTE:
+        return "blocked"
+    return "sent"
 
-def compute_pnl(df, positions):
-    oil_pos = positions.get("OIL", 0)
-    pnl = oil_pos * df["returns"]
+# =========================
+# PnL (v7)
+# =========================
+def compute_pnl(df):
+    pnl=df["returns"]
     return pnl, pnl.cumsum()
 
-
-def risk_metrics(pnl):
-    if len(pnl) < 10:
-        return {}
-
-    vol = pnl.std()*np.sqrt(252)
-    sharpe = pnl.mean()/(pnl.std()+EPS)*np.sqrt(252)
-    dd = (pnl.cumsum() - pnl.cumsum().cummax()).min()
-
-    return {"vol":vol,"sharpe":sharpe,"max_dd":dd}
-
-
-def backtest(df):
-    res = []
-    for i in range(60,len(df)-1):
-        sub = df.iloc[:i]
-        try:
-            f = compute_factors(sub)
-            c,_ ,_ = compute_model(f)
-            fwd = forward_signal(sub)
-            macro = macro_regime(sub)
-            c_adj = adjust_for_macro(c,macro)
-            comb = 0.7*c_adj + 0.3*fwd
-            pos = np.sign(comb)
-            nxt = df["returns"].iloc[i+1]
-            res.append(pos*nxt)
-        except:
-            continue
-    return pd.Series(res)
-
 # =========================
-# UI
+# DASHBOARD (v13)
 # =========================
 st.set_page_config(layout="wide")
-st.title("ProbabilityLens — Oil Risk Monitor (v7)")
+st.title("ProbabilityLens — Institutional Dashboard (v13)")
 
-df, source = fetch_eia_data()
-if df is None:
-    df, source = load_local()
+df = load_data()
+df = compute_features(df)
 
-if df is None:
-    st.error(source)
-    st.stop()
+f = compute_factors(df)
+conviction, regime = compute_model(f)
+fwd = forward_signal(df)
+macro = macro_regime(df)
 
-st.caption(f"Source: {source}")
-st.caption(f"Last Date: {df['date'].iloc[-1].date()}")
+combined = 0.7*conviction + 0.3*fwd
 
-try:
-    df = compute_features(df)
-    f = compute_factors(df)
-    conviction, regime, move = compute_model(f)
+# strategies
+sigs = strategy_signals(df)
+strat_w = allocate_strategies(sigs)
 
-    fwd = forward_signal(df)
-    macro = macro_regime(df)
-    c_adj = adjust_for_macro(conviction, macro)
-    combined = 0.7*c_adj + 0.3*fwd
+portfolio = portfolio_allocation(combined)
 
-    trade = trade_structure(combined, f["vol"])
+pnl, cum = compute_pnl(df)
+portfolio, risk_status = risk_engine(portfolio, f["vol"], pnl)
 
-    cross_data = fetch_cross_assets()
-    correlations = compute_correlations(df, cross_data)
-    cross_signals = cross_asset_signals(cross_data)
-    portfolio = portfolio_allocation(combined, cross_signals, correlations)
+# =========================
+# ROW 1 — SYSTEM
+# =========================
+c1,c2,c3,c4 = st.columns(4)
+c1.metric("System","RUNNING")
+c2.metric("Risk",risk_status)
+c3.metric("Kill Switch",str(KILL_SWITCH))
+c4.metric("Drawdown",f"{(cum-cum.cummax()).min():.2%}")
 
-    # EXECUTION
-    positions = generate_positions(portfolio, df["price"].iloc[-1])
-    pnl, cum_pnl = compute_pnl(df, positions)
-    risk = risk_metrics(pnl)
-    bt = backtest(df)
+# =========================
+# ROW 2 — CORE
+# =========================
+c5,c6,c7,c8 = st.columns(4)
+c5.metric("Conviction",f"{combined:.2f}")
+c6.metric("Regime",regime)
+c7.metric("Forward",f"{fwd:.2f}")
+c8.metric("Vol",f"{f['vol']:.2%}")
 
-    # KPI
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Conviction", f"{combined:.2f}")
-    c2.metric("Regime", regime)
-    c3.metric("Move", f"{move:.2%}")
-    c4.metric("Vol", f"{f['vol']:.2%}")
+# =========================
+# ROW 3 — PORTFOLIO
+# =========================
+left,right = st.columns(2)
+left.subheader("Portfolio")
+left.bar_chart(portfolio)
 
-    c5,c6,c7 = st.columns(3)
-    c5.metric("Forward", f"{fwd:.2f}")
-    c6.metric("Macro", macro)
-    c7.metric("Trade", trade)
+right.subheader("Strategy Allocation")
+right.bar_chart(strat_w)
 
-    left,right = st.columns([2,1])
+# =========================
+# ROW 4 — RISK
+# =========================
+r1,r2,r3 = st.columns(3)
+r1.metric("Max Position",f"{MAX_POSITION_SIZE:.0%}")
+r2.metric("Max DD",f"{MAX_DRAWDOWN:.0%}")
+r3.metric("Stop Loss",f"{STOP_LOSS_THRESHOLD:.0%}")
 
-    with left:
-        st.subheader("Decision")
-        st.write(trade)
+# =========================
+# ROW 5 — PERFORMANCE
+# =========================
+st.subheader("PnL")
+st.line_chart(cum)
 
-    with right:
-        st.subheader("Portfolio")
-        st.bar_chart(portfolio)
+# =========================
+# ROW 6 — REALTIME SIM
+# =========================
+def realtime(df):
+    out=[]
+    for i in range(60,len(df)):
+        sub=df.iloc[:i]
+        c,_=compute_model(compute_factors(sub))
+        out.append(c)
+    return pd.Series(out)
 
-    st.subheader("Correlations")
-    st.bar_chart(correlations)
+st.subheader("Realtime Simulation")
+st.line_chart(realtime(df))
 
-    st.subheader("Execution")
-    st.write(positions)
-
-    st.subheader("PnL")
-    st.line_chart(cum_pnl)
-
-    if risk:
-        r1,r2,r3 = st.columns(3)
-        r1.metric("Vol", f"{risk['vol']:.2%}")
-        r2.metric("Sharpe", f"{risk['sharpe']:.2f}")
-        r3.metric("Drawdown", f"{risk['max_dd']:.2%}")
-
-    st.subheader("Backtest")
-    st.line_chart(bt.cumsum())
-
-except Exception as e:
-    st.error(f"System diagnostic: {str(e)}")
+# =========================
+# EXECUTION PANEL
+# =========================
+st.subheader("Execution")
+if st.button("Execute Trade"):
+    res = place_order("USO",10)
+    st.write(res)
