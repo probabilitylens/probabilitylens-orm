@@ -1,261 +1,267 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+import datetime as dt
+from io import BytesIO
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-import io
 
-st.set_page_config(layout="wide")
+# =========================
+# CONFIG
+# =========================
+MIN_OBS = 50
+EPS = 1e-8
 
-# =========================================================
-# DATA LOADER — FINAL (SCAN ALL SHEETS, PATTERN EXTRACTION)
-# =========================================================
-@st.cache_data
-def load_wti():
+# =========================
+# DATA LOADER
+# =========================
+def load_excel(file):
     try:
-        xls = pd.ExcelFile("data/wti.xls")
+        xls = pd.ExcelFile(file)
+        best_series = None
+        max_len = 0
 
-        best_df = None
-        best_len = 0
-
-        # iterate through all sheets
         for sheet in xls.sheet_names:
-            raw = pd.read_excel(xls, sheet_name=sheet, header=None)
+            df = xls.parse(sheet)
 
-            # try each column as potential date column
-            for col in range(min(5, raw.shape[1])):
-
-                date_col = pd.to_datetime(raw.iloc[:, col], errors="coerce")
-
-                if date_col.notna().sum() < 20:
-                    continue  # not a valid date column
-
-                # now search for numeric column next to it
-                for pcol in range(raw.shape[1]):
-                    if pcol == col:
+            for col_date in df.columns:
+                try:
+                    dates = pd.to_datetime(df[col_date], errors='coerce')
+                    if dates.notna().sum() < 10:
                         continue
 
-                    price_col = pd.to_numeric(raw.iloc[:, pcol], errors="coerce")
+                    for col_val in df.columns:
+                        vals = pd.to_numeric(df[col_val], errors='coerce')
 
-                    if price_col.notna().sum() < 20:
-                        continue
+                        mask = dates.notna() & vals.notna()
+                        if mask.sum() > max_len:
+                            temp = pd.DataFrame({
+                                "date": dates[mask],
+                                "price": vals[mask]
+                            }).sort_values("date")
 
-                    df = pd.DataFrame({
-                        "Date": date_col,
-                        "Price": price_col
-                    }).dropna()
+                            max_len = len(temp)
+                            best_series = temp
 
-                    if len(df) > best_len:
-                        best_df = df
-                        best_len = len(df)
+                except:
+                    continue
 
-        if best_df is None or best_len < 20:
-            raise Exception("Could not extract valid time series from Excel")
+        if best_series is None:
+            raise ValueError("No valid time series found")
 
-        best_df = best_df.sort_values("Date").tail(200)
+        if len(best_series) < MIN_OBS:
+            raise ValueError("Insufficient data length")
 
-        return best_df.reset_index(drop=True)
+        best_series = best_series.drop_duplicates("date")
+        best_series = best_series.sort_values("date")
+
+        return best_series.reset_index(drop=True)
 
     except Exception as e:
-        st.error(f"DATA ERROR: {e}")
-        st.stop()
+        raise ValueError(f"Data loading failed: {str(e)}")
 
 
-df = load_wti()
+# =========================
+# FEATURE ENGINE
+# =========================
+def compute_features(df):
+    df = df.copy()
 
-# =========================================================
-# INPUTS
-# =========================================================
-st.sidebar.title("Inputs")
+    df["returns"] = np.log(df["price"] / df["price"].shift(1))
+    df["vol_20"] = df["returns"].rolling(20).std() * np.sqrt(252)
+    df["trend_20"] = df["price"] / df["price"].rolling(20).mean() - 1
+    df["trend_60"] = df["price"] / df["price"].rolling(60).mean() - 1
+    df["momentum_20"] = df["price"].pct_change(20)
 
-signal = st.sidebar.slider("Signal", 0.0, 1.0, 0.3)
-timing = st.sidebar.slider("Timing", 0.0, 1.0, 0.3)
-confirmation = st.sidebar.slider("Confirmation", 0.0, 1.0, 0.3)
-alignment = st.sidebar.slider("Alignment", 0.0, 1.0, 0.58)
-crowding = st.sidebar.slider("Crowding", 0.0, 1.0, 0.5)
-market = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
-capital = st.sidebar.slider("Capital", 0.0, 1.0, 0.5)
+    df["zscore"] = (df["returns"] - df["returns"].mean()) / (df["returns"].std() + EPS)
 
-# =========================================================
-# MODEL
-# =========================================================
-factors = {
-    "Signal": signal,
-    "Timing": timing,
-    "Confirmation": confirmation,
-    "Alignment": alignment,
-    "Crowding": crowding,
-    "Market": market,
-    "Capital": capital,
-}
+    return df.dropna()
 
-scores = np.array(list(factors.values()))
-conviction = scores.mean()
 
-returns = df["Price"].pct_change().dropna()
-vol = returns.std() * np.sqrt(252)
+# =========================
+# FACTOR ENGINE
+# =========================
+def compute_factors(df):
+    last = df.iloc[-1]
 
-if vol < 0.2:
-    vol_regime = "LOW VOL"
-elif vol < 0.4:
-    vol_regime = "NORMAL VOL"
-else:
-    vol_regime = "HIGH VOL"
+    signal = np.tanh(2 * last["trend_20"] + last["trend_60"])
 
-trend = df["Price"].iloc[-1] / df["Price"].iloc[0] - 1
-positioning = "CROWDED LONG" if trend > 0.15 else "NEUTRAL"
+    timing = -abs(last["zscore"])
+    timing = np.clip(timing, -1, 1)
 
-expected_move = vol * np.sqrt(10) * conviction
+    signs = np.sign([
+        last["trend_20"],
+        last["momentum_20"],
+        last["returns"]
+    ])
+    confirmation = np.mean(signs)
 
-regime = "PREPARATION" if conviction < 0.6 else "ACTIVE"
-action = "NO POSITION" if conviction < 0.6 else "ENTER TRADE"
+    alignment = 1 if np.sign(last["trend_20"]) == np.sign(last["trend_60"]) else -1
 
-# =========================================================
-# HEADER
-# =========================================================
-col_logo, col_title = st.columns([1,5])
+    crowding = -np.tanh(last["zscore"])
 
-with col_logo:
-    try:
-        st.image("Logo.png", width=120)
-    except:
-        pass
+    vol = last["vol_20"]
+    if vol < df["vol_20"].quantile(0.3):
+        health = 1
+    elif vol > df["vol_20"].quantile(0.7):
+        health = -1
+    else:
+        health = 0
 
-with col_title:
-    st.title("ProbabilityLens")
-    st.caption("Oil Risk Monitor — Institutional Decision System")
+    capital = signal / (vol + EPS)
+    capital = np.tanh(capital)
 
-st.divider()
+    return {
+        "signal": signal,
+        "timing": timing,
+        "confirmation": confirmation,
+        "alignment": alignment,
+        "crowding": crowding,
+        "health": health,
+        "capital": capital,
+        "vol": vol
+    }
 
-# =========================================================
-# METRICS ROW
-# =========================================================
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Conviction", f"{round(conviction*100)}%")
-m2.metric("Expected Move (10d)", f"{round(expected_move*100,2)}%")
-m3.metric("Volatility Regime", vol_regime)
-m4.metric("Positioning", positioning)
 
-# =========================================================
-# MAIN GRID
-# =========================================================
-left, right = st.columns([1,1])
+# =========================
+# MODEL ENGINE
+# =========================
+def compute_model(f):
+    weights = {
+        "signal": 0.25,
+        "timing": 0.15,
+        "confirmation": 0.15,
+        "alignment": 0.10,
+        "crowding": 0.10,
+        "health": 0.15,
+        "capital": 0.10
+    }
 
-# ---------------- LEFT ----------------
-with left:
-    st.markdown("## Decision")
+    conviction = sum(f[k] * weights[k] for k in weights)
 
-    st.markdown(f"""
-    <div style="background:#374151;padding:25px;border-radius:12px;color:white">
-        <h2>{regime}</h2>
-        <p><b>Action:</b> {action}</p>
-        <p><b>Conviction:</b> {round(conviction*100)}%</p>
-        <p><b>Expected Move:</b> {round(expected_move*100,2)}%</p>
-    </div>
-    """, unsafe_allow_html=True)
+    if conviction > 0.6:
+        regime = "ACTIVE LONG"
+    elif conviction < -0.6:
+        regime = "ACTIVE SHORT"
+    elif abs(conviction) < 0.3:
+        regime = "NEUTRAL"
+    else:
+        regime = "TRANSITION"
 
-    st.markdown("## Trade Expression")
-    st.write("Direction: LONG")
-    st.write("Horizon: 2–6 weeks")
-    st.write("Entry: Alignment > 0.7 & Confirmation improving")
-    st.write("Risk: Signal deterioration")
+    expected_move = conviction * f["vol"] * np.sqrt(5)
 
-    st.markdown("## Factor Decomposition")
+    return conviction, regime, expected_move
 
-    factor_df = pd.DataFrame({
-        "Factor": list(factors.keys()),
-        "Score": list(factors.values()),
-        "Contribution": scores / scores.sum()
-    })
 
-    st.dataframe(factor_df, use_container_width=True)
+# =========================
+# INTERPRETATION ENGINE
+# =========================
+def interpret(f, conviction, regime):
+    text = []
 
-    st.markdown("## Scenario Analysis")
+    if f["signal"] > 0.7:
+        text.append("Trend strength is pronounced across time horizons.")
+    elif f["signal"] < -0.7:
+        text.append("Downside momentum is dominant and persistent.")
 
-    scenarios = pd.DataFrame({
-        "Scenario": ["Base", "Bull", "Bear"],
-        "Probability": [0.5, 0.25, 0.25],
-        "Move": ["+3%", "+8%", "-5%"]
-    })
+    if f["timing"] < -0.5:
+        text.append("Entry conditions appear stretched, increasing mean reversion risk.")
 
-    st.dataframe(scenarios, use_container_width=True)
+    if f["health"] == -1:
+        text.append("Elevated volatility reduces directional reliability.")
 
-# ---------------- RIGHT ----------------
-with right:
-    st.markdown("## WTI Price")
+    if f["crowding"] < -0.5:
+        text.append("Positioning appears crowded, limiting asymmetry.")
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df["Date"],
-        y=df["Price"],
-        line=dict(width=2)
-    ))
+    if regime == "ACTIVE LONG":
+        decision = "Long bias with high conviction."
+    elif regime == "ACTIVE SHORT":
+        decision = "Short bias with high conviction."
+    else:
+        decision = "No clear edge. Maintain optionality."
 
-    fig.update_layout(height=450)
-    st.plotly_chart(fig, use_container_width=True)
+    return " ".join(text), decision
 
-    st.markdown("## Signal Diagnostics")
 
-    st.write(f"Signal: {'Weak' if signal<0.5 else 'Strong'}")
-    st.write(f"Timing: {'Early' if timing<0.5 else 'Mature'}")
-    st.write(f"Confirmation: {'Low' if confirmation<0.5 else 'High'}")
-    st.write(f"Alignment: {'Fragmented' if alignment<0.6 else 'Aligned'}")
-    st.write(f"Crowding: {'Neutral' if crowding<0.6 else 'Crowded'}")
-
-# =========================================================
-# INSTITUTIONAL REPORT
-# =========================================================
-def build_report():
-    return f"""
-EXECUTIVE SUMMARY
-
-The oil market is currently in a {regime.lower()} regime with conviction at {round(conviction*100)}%.
-
-MARKET CONTEXT
-
-Recent price dynamics show a trend of {round(trend*100,2)}%.
-Volatility is classified as {vol_regime}.
-
-FACTOR ANALYSIS
-
-Signal: {signal}
-Timing: {timing}
-Confirmation: {confirmation}
-Alignment: {alignment}
-
-POSITIONING
-
-Market positioning appears {positioning.lower()}.
-
-DECISION
-
-Regime: {regime}
-Action: {action}
-
-CONCLUSION
-
-Conditions are not yet sufficient for aggressive positioning.
-"""
-
-def generate_pdf():
-    buffer = io.BytesIO()
+# =========================
+# REPORT ENGINE
+# =========================
+def generate_report(conviction, regime, expected_move, interp_text, decision):
+    buffer = BytesIO()
     doc = SimpleDocTemplate(buffer)
     styles = getSampleStyleSheet()
 
     content = []
-    for line in build_report().split("\n"):
-        content.append(Paragraph(line, styles["Normal"]))
-        content.append(Spacer(1, 12))
+
+    def add(title, text):
+        content.append(Paragraph(f"<b>{title}</b>", styles["Heading2"]))
+        content.append(Spacer(1, 10))
+        content.append(Paragraph(text, styles["BodyText"]))
+        content.append(Spacer(1, 20))
+
+    add("Executive Summary",
+        f"The model indicates a {regime} regime with conviction of {conviction:.2f}. "
+        f"Expected move over the near term is {expected_move:.2%}. {decision}")
+
+    add("Market Context",
+        "Recent price dynamics reflect evolving trend structure and volatility regime shifts.")
+
+    add("Factor Analysis", interp_text)
+
+    add("Scenario Analysis",
+        "Base: continuation. Bull: trend acceleration. Bear: reversal under volatility stress.")
+
+    add("Risk Assessment",
+        "Primary risks include volatility expansion and positioning overcrowding.")
+
+    add("Decision", decision)
 
     doc.build(content)
     buffer.seek(0)
-
     return buffer
 
-st.download_button(
-    "Download Institutional Report",
-    generate_pdf(),
-    "oil_report.pdf",
-    "application/pdf"
-)
+
+# =========================
+# UI
+# =========================
+st.set_page_config(layout="wide")
+st.title("ProbabilityLens — Oil Risk Monitor")
+
+file = st.file_uploader("Upload WTI Excel File")
+
+if file:
+    try:
+        df = load_excel(file)
+        df = compute_features(df)
+        factors = compute_factors(df)
+        conviction, regime, expected_move = compute_model(factors)
+        interp_text, decision = interpret(factors, conviction, regime)
+
+        # KPI STRIP
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Conviction", f"{conviction:.2f}")
+        c2.metric("Regime", regime)
+        c3.metric("Expected Move", f"{expected_move:.2%}")
+        c4.metric("Volatility", f"{factors['vol']:.2%}")
+
+        # MAIN PANEL
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            st.subheader("Decision")
+            st.markdown(f"### {decision}")
+            st.write(interp_text)
+
+        with col2:
+            st.subheader("Factors")
+            st.bar_chart({
+                k: [v] for k, v in factors.items() if k != "vol"
+            })
+
+        # REPORT
+        pdf = generate_report(conviction, regime, expected_move, interp_text, decision)
+        st.download_button("Download Report", pdf, "report.pdf")
+
+    except Exception as e:
+        st.error(f"System error: {str(e)}")
