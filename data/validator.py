@@ -1,5 +1,5 @@
 import pandas as pd
-from logging.logger import log
+from plogging.logger import log
 from config.settings import ASSETS, MIN_OBSERVATIONS
 
 def validate_prices(df):
