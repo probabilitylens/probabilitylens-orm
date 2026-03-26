@@ -15,41 +15,58 @@ MIN_OBS = 50
 EPS = 1e-8
 
 # =========================
-# DATA INGESTION (v4)
+# CORE: PATTERN EXTRACTION (UNIFIED)
+# =========================
+def extract_time_series(df):
+    best_series = None
+    max_len = 0
+
+    for col_date in df.columns:
+        dates = pd.to_datetime(df[col_date], errors='coerce')
+        if dates.notna().sum() < 10:
+            continue
+
+        for col_val in df.columns:
+            vals = pd.to_numeric(df[col_val], errors='coerce')
+
+            mask = dates.notna() & vals.notna()
+
+            if mask.sum() > max_len:
+                temp = pd.DataFrame({
+                    "date": dates[mask],
+                    "price": vals[mask]
+                }).sort_values("date")
+
+                best_series = temp
+                max_len = len(temp)
+
+    return best_series
+
+
+# =========================
+# DATA INGESTION (EIA)
 # =========================
 @st.cache_data(ttl=86400)
 def fetch_eia_data():
     try:
         tables = pd.read_html(EIA_URL)
 
-        # Find largest usable table
         best = None
         max_len = 0
 
         for t in tables:
-            for col in t.columns:
-                try:
-                    dates = pd.to_datetime(t[col], errors='coerce')
-                    if dates.notna().sum() < 10:
-                        continue
-
-                    for col2 in t.columns:
-                        vals = pd.to_numeric(t[col2], errors='coerce')
-                        mask = dates.notna() & vals.notna()
-
-                        if mask.sum() > max_len:
-                            temp = pd.DataFrame({
-                                "date": dates[mask],
-                                "price": vals[mask]
-                            }).sort_values("date")
-
-                            best = temp
-                            max_len = len(temp)
-                except:
-                    continue
+            ts = extract_time_series(t)
+            if ts is not None and len(ts) > max_len:
+                best = ts
+                max_len = len(ts)
 
         if best is None or len(best) < MIN_OBS:
             raise ValueError("EIA data insufficient")
+
+        best = best.drop_duplicates("date")
+
+        if not best["date"].is_monotonic_increasing:
+            best = best.sort_values("date")
 
         return best.reset_index(drop=True), "EIA Live"
 
@@ -57,13 +74,35 @@ def fetch_eia_data():
         return None, f"EIA fetch failed: {str(e)}"
 
 
+# =========================
+# DATA INGESTION (LOCAL BACKUP)
+# =========================
 @st.cache_data
 def load_local():
     try:
-        df = pd.read_excel(DEFAULT_DATA_PATH)
-        df.columns = ["date", "price"]
-        df["date"] = pd.to_datetime(df["date"])
-        return df.sort_values("date"), "Local Backup"
+        xls = pd.ExcelFile(DEFAULT_DATA_PATH)
+
+        best = None
+        max_len = 0
+
+        for sheet in xls.sheet_names:
+            df = xls.parse(sheet)
+            ts = extract_time_series(df)
+
+            if ts is not None and len(ts) > max_len:
+                best = ts
+                max_len = len(ts)
+
+        if best is None or len(best) < MIN_OBS:
+            raise ValueError("Local data insufficient")
+
+        best = best.drop_duplicates("date")
+
+        if not best["date"].is_monotonic_increasing:
+            best = best.sort_values("date")
+
+        return best.reset_index(drop=True), "Local Backup"
+
     except Exception as e:
         return None, f"Local load failed: {str(e)}"
 
@@ -85,7 +124,7 @@ def compute_features(df):
     df = df.dropna()
 
     if len(df) < MIN_OBS:
-        raise ValueError("Feature layer insufficient")
+        raise ValueError("Feature layer insufficient after processing")
 
     return df
 
@@ -158,63 +197,54 @@ def compute_model(f):
 
 
 # =========================
-# SCENARIO ENGINE (v4)
+# SCENARIO ENGINE
 # =========================
-def compute_scenarios(conviction, vol):
-    base = 0.5 + conviction * 0.3
-    bull = max(0, base)
-    bear = max(0, 1 - base)
-
-    # Normalize
-    total = bull + bear
-    bull /= total
-    bear /= total
+def compute_scenarios(conviction):
+    bull = max(0, 0.5 + conviction * 0.4)
+    bear = max(0, 0.5 - conviction * 0.4)
     base = 1 - (bull + bear) * 0.5
 
+    total = bull + bear + base
     return {
-        "bull": bull,
-        "base": base,
-        "bear": bear
+        "bull": bull / total,
+        "base": base / total,
+        "bear": bear / total
     }
 
 
 # =========================
-# POSITIONING MODEL (v4)
+# POSITIONING MODEL
 # =========================
 def compute_position(conviction, vol, crowding):
-    raw_size = abs(conviction) / (vol + EPS)
+    raw = abs(conviction) / (vol + EPS)
+    adj = raw * (1 - abs(crowding))
 
-    # Penalize crowding
-    adj = raw_size * (1 - abs(crowding))
+    direction = "LONG" if conviction > 0 else "SHORT" if conviction < 0 else "FLAT"
 
-    if conviction > 0:
-        direction = "LONG"
-    elif conviction < 0:
-        direction = "SHORT"
-    else:
-        direction = "FLAT"
-
-    return direction, np.tanh(adj)
+    return direction, float(np.tanh(adj))
 
 
 # =========================
 # INTERPRETATION ENGINE
 # =========================
 def interpret(f, regime, position):
-    narrative = []
+    text = []
 
     if f["signal"] > 0.7:
-        narrative.append("Trend strength is pronounced across time horizons.")
+        text.append("Trend strength is pronounced across time horizons.")
+
+    if f["timing"] < -0.5:
+        text.append("Entry conditions appear stretched.")
 
     if f["health"] == -1:
-        narrative.append("Volatility regime is elevated, reducing reliability.")
+        text.append("Volatility is elevated, reducing reliability.")
 
     if f["crowding"] < -0.5:
-        narrative.append("Positioning appears crowded.")
+        text.append("Positioning appears crowded.")
 
-    narrative.append(f"Recommended positioning is {position[0]} with calibrated sizing.")
+    text.append(f"Recommended positioning is {position[0]} with calibrated sizing.")
 
-    return " ".join(narrative)
+    return " ".join(text)
 
 
 # =========================
@@ -225,23 +255,19 @@ def generate_report(regime, conviction, expected_move, scenarios, position, narr
     doc = SimpleDocTemplate(buffer)
     styles = getSampleStyleSheet()
 
-    def sec(title, txt):
-        return [Paragraph(f"<b>{title}</b>", styles["Heading2"]),
+    def sec(t, x):
+        return [Paragraph(f"<b>{t}</b>", styles["Heading2"]),
                 Spacer(1, 10),
-                Paragraph(txt, styles["BodyText"]),
+                Paragraph(x, styles["BodyText"]),
                 Spacer(1, 20)]
 
     content = []
-
     content += sec("Executive Summary",
-        f"{regime} regime with conviction {conviction:.2f}. Expected move {expected_move:.2%}.")
-
+                   f"{regime} regime with conviction {conviction:.2f} and expected move {expected_move:.2%}.")
     content += sec("Scenario Analysis",
-        f"Bull: {scenarios['bull']:.0%}, Base: {scenarios['base']:.0%}, Bear: {scenarios['bear']:.0%}")
-
+                   f"Bull {scenarios['bull']:.0%}, Base {scenarios['base']:.0%}, Bear {scenarios['bear']:.0%}.")
     content += sec("Positioning",
-        f"Direction: {position[0]}, Size (normalized): {position[1]:.2f}")
-
+                   f"{position[0]} exposure with normalized size {position[1]:.2f}.")
     content += sec("Narrative", narrative)
 
     doc.build(content)
@@ -253,10 +279,10 @@ def generate_report(regime, conviction, expected_move, scenarios, position, narr
 # UI
 # =========================
 st.set_page_config(layout="wide")
-st.title("ProbabilityLens — Oil Risk Monitor (v4)")
+st.title("ProbabilityLens — Oil Risk Monitor (v4.1)")
 
-# DATA LAYER
 df, source = fetch_eia_data()
+
 if df is None:
     df, source = load_local()
 
@@ -269,22 +295,20 @@ st.caption(f"Last Observation: {df['date'].iloc[-1].date()}")
 
 try:
     df = compute_features(df)
-    factors = compute_factors(df)
-    conviction, regime, expected_move = compute_model(factors)
+    f = compute_factors(df)
+    conviction, regime, move = compute_model(f)
 
-    scenarios = compute_scenarios(conviction, factors["vol"])
-    position = compute_position(conviction, factors["vol"], factors["crowding"])
-    narrative = interpret(factors, regime, position)
+    scenarios = compute_scenarios(conviction)
+    position = compute_position(conviction, f["vol"], f["crowding"])
+    narrative = interpret(f, regime, position)
 
-    # KPI STRIP
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Conviction", f"{conviction:.2f}")
     c2.metric("Regime", regime)
-    c3.metric("Expected Move", f"{expected_move:.2%}")
-    c4.metric("Volatility", f"{factors['vol']:.2%}")
+    c3.metric("Expected Move", f"{move:.2%}")
+    c4.metric("Volatility", f"{f['vol']:.2%}")
 
-    # MAIN GRID
-    left, right = st.columns([2,1])
+    left, right = st.columns([2, 1])
 
     with left:
         st.subheader("Decision")
@@ -295,9 +319,8 @@ try:
         st.subheader("Scenarios")
         st.bar_chart(scenarios)
 
-    # REPORT
-    pdf = generate_report(regime, conviction, expected_move, scenarios, position, narrative)
-    st.download_button("Download Report", pdf, "v4_report.pdf")
+    pdf = generate_report(regime, conviction, move, scenarios, position, narrative)
+    st.download_button("Download Report", pdf, "ProbabilityLens_v4.1.pdf")
 
 except Exception as e:
     st.error(f"System diagnostic: {str(e)}")
