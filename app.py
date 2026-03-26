@@ -3,62 +3,41 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
-import tempfile
-import os
-
-# PDF
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.pagesizes import letter
+import base64
+import io
 
 st.set_page_config(layout="wide")
 
-# =========================
-# ROBUST DATA LOADER
-# =========================
+# =========================================================
+# DATA LOADER (ROBUST — NEVER BREAKS)
+# =========================================================
 @st.cache_data
 def load_wti():
     try:
         raw = pd.read_excel("data/wti.xls", sheet_name=0, header=None)
 
-        # Detect header row
-        header_row = None
-        for i in range(min(30, len(raw))):
-            row = raw.iloc[i].astype(str).str.lower()
-            if row.str.contains("date").any() and row.str.contains("price|value|close").any():
-                header_row = i
+        start_row = None
+        for i in range(len(raw)):
+            try:
+                pd.to_datetime(raw.iloc[i, 0])
+                start_row = i
                 break
+            except:
+                continue
 
-        if header_row is None:
-            raise Exception("Header row not detected")
+        if start_row is None:
+            raise Exception("No valid date row found")
 
-        df = pd.read_excel("data/wti.xls", sheet_name=0, header=header_row)
-
-        cols = df.columns.astype(str).str.lower()
-
-        date_col = None
-        price_col = None
-
-        for c in cols:
-            if "date" in c:
-                date_col = c
-            if any(x in c for x in ["price", "value", "close"]):
-                price_col = c
-
-        if date_col is None or price_col is None:
-            raise Exception("Date/Price columns not found")
-
-        df = df[[date_col, price_col]]
+        df = raw.iloc[start_row:].copy()
+        df = df.iloc[:, :2]
         df.columns = ["Date", "Price"]
 
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
 
         df = df.dropna()
-
-        if len(df) < 10:
-            raise Exception("Too few valid rows after cleaning")
-
         df = df.sort_values("Date").tail(120)
 
         return df
@@ -67,16 +46,11 @@ def load_wti():
         st.error(f"DATA ERROR: {e}")
         st.stop()
 
-
 df = load_wti()
 
-if df.empty:
-    st.error("WTI dataset empty after parsing")
-    st.stop()
-
-# =========================
-# INPUTS
-# =========================
+# =========================================================
+# SIDEBAR INPUTS
+# =========================================================
 st.sidebar.title("Inputs")
 
 signal = st.sidebar.slider("Signal", 0.0, 1.0, 0.3)
@@ -84,221 +58,147 @@ timing = st.sidebar.slider("Timing", 0.0, 1.0, 0.3)
 confirmation = st.sidebar.slider("Confirmation", 0.0, 1.0, 0.3)
 alignment = st.sidebar.slider("Alignment", 0.0, 1.0, 0.58)
 crowding = st.sidebar.slider("Crowding", 0.0, 1.0, 0.5)
-market_health = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
+market = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital", 0.0, 1.0, 0.5)
 
-vals = np.array([signal, timing, confirmation, alignment, crowding, market_health, capital])
-score = vals.mean() * 100
+# =========================================================
+# CALCULATIONS
+# =========================================================
+scores = np.array([signal, timing, confirmation, alignment, crowding, market, capital])
+weights = np.array([1,1,1,1,1,1,1])
+conviction = np.dot(scores, weights) / weights.sum()
 
-# =========================
-# MODEL
-# =========================
-if score < 50:
-    regime, action = "PREPARATION", "NO POSITION"
-elif score < 75:
-    regime, action = "DEVELOPING", "WAIT"
-else:
-    regime, action = "NEAR TRIGGER", "ENTER"
+expected_move = (df["Price"].pct_change().std() * np.sqrt(10)) * conviction
 
-conviction = int((1 - np.std(vals)) * 100)
-expected_move = (score / 100) * (alignment + signal) * 10
+regime = "PREPARATION" if conviction < 0.6 else "ACTIVE"
+action = "NO POSITION" if conviction < 0.6 else "ENTER TRADE"
 
-# =========================
-# INTERPRETATION
-# =========================
-def interpret(x):
-    if x < 0.3:
-        return "weak"
-    elif x < 0.7:
-        return "building"
-    else:
-        return "strong"
-
-# =========================
-# REPORT ENGINE
-# =========================
-def generate_report():
-
-    trend = "uptrend" if df["Price"].iloc[-1] > df["Price"].iloc[0] else "range-bound"
-
-    report = {
-        "header": {
-            "date": str(datetime.today().date()),
-            "regime": regime,
-            "action": action,
-            "conviction": conviction,
-            "expected_move": round(expected_move, 1)
-        },
-
-        "executive_summary": (
-            f"The system is in a {regime.lower()} regime with a composite score of {round(score,1)}. "
-            f"Signals remain {interpret(signal)} and alignment is {interpret(alignment)}, indicating incomplete structure. "
-            f"As a result, the model recommends {action.lower()} as current conditions do not yet justify deployment."
-        ),
-
-        "market_state": (
-            f"WTI prices are in a {trend}, with recent acceleration visible. "
-            f"Volatility remains contained and price action reflects controlled repricing."
-        ),
-
-        "signal_diagnostics": {
-            "Signal": interpret(signal),
-            "Timing": interpret(timing),
-            "Confirmation": interpret(confirmation),
-            "Alignment": interpret(alignment),
-            "Crowding": interpret(crowding),
-            "Market Health": interpret(market_health),
-            "Capital": interpret(capital)
-        },
-
-        "mispricing": (
-            "The market appears to be pricing continuation without fully incorporating improving structural alignment, "
-            "creating a gap between observed signals and implied expectations."
-        ),
-
-        "mechanism": (
-            "Improvement in confirmation and alignment would trigger repricing, as participants adjust positioning to stronger signals."
-        ),
-
-        "positioning": (
-            "Positioning is neutral, indicating limited forced flows and absence of extreme crowding."
-        ),
-
-        "scenarios": pd.DataFrame({
-            "Scenario": ["Base", "Bull", "Bear"],
-            "Probability": [0.5, 0.25, 0.25],
-            "Move": [
-                f"+{round(expected_move,1)}%",
-                f"+{round(expected_move*2,1)}%",
-                f"-{round(expected_move*1.5,1)}%"
-            ]
-        }),
-
-        "trade": {
-            "Direction": "LONG",
-            "Entry": "Confirmation + alignment > 0.7",
-            "Horizon": "2–6 weeks",
-            "Risk": "Signal deterioration"
-        },
-
-        "decision_logic": (
-            f"The system outputs {action} because the composite score of {round(score,1)} "
-            "remains below the activation threshold required for capital deployment."
-        ),
-
-        "conclusion": (
-            "Current conditions reflect early-stage development. Monitoring improvements in alignment and confirmation remains critical."
-        )
-    }
-
-    return report
-
-
-report = generate_report()
-
-# =========================
-# CHART
-# =========================
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=df["Date"], y=df["Price"], line=dict(width=3)))
-fig.update_layout(template="plotly_dark", height=500)
-
-# =========================
-# UI
-# =========================
-
+# =========================================================
 # HEADER
-st.title("ProbabilityLens")
-st.caption("Oil Risk Monitor — Decision Engine")
+# =========================================================
+col_logo, col_title = st.columns([1,5])
 
-# HERO
-col1, col2 = st.columns([1.2, 1.8])
+with col_logo:
+    st.image("Logo.png", width=120)
 
+with col_title:
+    st.markdown("## ProbabilityLens")
+    st.markdown("Oil Risk Monitor — Decision Engine")
+
+st.divider()
+
+# =========================================================
+# MAIN LAYOUT
+# =========================================================
+col1, col2 = st.columns([1,1])
+
+# ================= LEFT =================
 with col1:
-    st.markdown(f"## {report['header']['regime']}")
-    st.markdown(f"### {report['header']['action']}")
-    st.metric("Conviction", f"{report['header']['conviction']}%")
-    st.metric("Expected Move", f"{report['header']['expected_move']}%")
 
+    st.markdown("### Decision")
+
+    st.markdown(f"""
+    <div style="background:#6b7280;padding:20px;border-radius:10px;color:white">
+        <h2>{regime}</h2>
+        <b>Action:</b> {action}<br>
+        <b>Conviction:</b> {round(conviction*100)}%<br>
+        <b>Expected Move:</b> {round(expected_move*100,2)}%
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("### Trade Expression")
+    st.write(f"Direction: LONG")
+    st.write(f"Horizon: 2–6 weeks")
+    st.write(f"Conviction: {round(conviction*100)}%")
+
+    st.markdown("### Signal Diagnostics")
+    st.write(f"Signal: {'Weak' if signal<0.5 else 'Strong'}")
+    st.write(f"Timing: {'Early' if timing<0.5 else 'Mature'}")
+    st.write(f"Confirmation: {'Low' if confirmation<0.5 else 'High'}")
+    st.write(f"Alignment: {'Fragmented' if alignment<0.6 else 'Aligned'}")
+    st.write(f"Crowding: {'Neutral' if crowding<0.6 else 'Crowded'}")
+
+    st.markdown("### Scenario Analysis")
+
+    scenarios = pd.DataFrame({
+        "Scenario":["Base","Bull","Bear"],
+        "Probability":[0.5,0.25,0.25],
+        "Move":["+3%","+8%","-5%"]
+    })
+    st.dataframe(scenarios, use_container_width=True)
+
+# ================= RIGHT =================
 with col2:
+
+    st.markdown("### WTI Price")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["Date"], y=df["Price"], line=dict(color="white")))
+    fig.update_layout(template="plotly_dark", height=400)
+
     st.plotly_chart(fig, use_container_width=True)
 
-# TRADE + SIGNALS
-col3, col4 = st.columns(2)
+# =========================================================
+# PDF REPORT ENGINE (REAL TEXT)
+# =========================================================
+def generate_report_text():
 
-with col3:
-    st.subheader("Trade Expression")
-    for k, v in report["trade"].items():
-        st.write(f"{k}: {v}")
+    text = f"""
+    Executive Summary
 
-with col4:
-    st.subheader("Signal Diagnostics")
-    for k, v in report["signal_diagnostics"].items():
-        st.write(f"{k}: {v}")
+    Current market conditions indicate a {regime.lower()} regime, with an aggregate conviction level of {round(conviction*100)} percent. 
+    Despite improving alignment and stable market conditions, confirmation signals remain insufficient to justify immediate positioning.
 
-# NARRATIVE
-st.subheader("Executive Summary")
-st.write(report["executive_summary"])
+    Market Situation
 
-st.subheader("Market State")
-st.write(report["market_state"])
+    Oil prices have demonstrated recent upward momentum, but the move appears partially driven by positioning rather than fundamental confirmation.
+    Macro signals remain fragmented, and no dominant narrative has emerged to support sustained directional conviction.
 
-st.subheader("Mispricing")
-st.write(report["mispricing"])
+    Signal Assessment
 
-st.subheader("Mechanism")
-st.write(report["mechanism"])
+    The signal complex remains weak to moderate. Timing is early-stage, while confirmation remains below threshold levels. 
+    Alignment across factors has improved but is not yet decisive. Crowding metrics remain neutral, suggesting limited positioning risk.
 
-st.subheader("Positioning")
-st.write(report["positioning"])
+    Positioning Implications
 
-st.subheader("Decision Logic")
-st.write(report["decision_logic"])
+    Given the current signal structure, risk-reward does not justify active positioning. 
+    The model recommends maintaining optionality while monitoring for improved confirmation and alignment.
 
-st.subheader("Conclusion")
-st.write(report["conclusion"])
+    Decision
 
-# SCENARIOS
-st.subheader("Scenario Analysis")
-st.dataframe(report["scenarios"])
+    Regime: {regime}
+    Action: {action}
 
-# =========================
-# PDF
-# =========================
-def build_pdf(report):
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    doc = SimpleDocTemplate(tmp.name, pagesize=letter)
+    Conclusion
+
+    The market is transitioning but not yet actionable. The appropriate strategy is preparation rather than execution.
+    """
+
+    return text
+
+def generate_pdf():
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer)
     styles = getSampleStyleSheet()
 
     content = []
-
-    def add(title, text):
-        content.append(Spacer(1, 10))
-        content.append(Paragraph(f"<b>{title}</b>", styles["Heading2"]))
-        content.append(Paragraph(text, styles["Normal"]))
-
-    add("Executive Summary", report["executive_summary"])
-    add("Market State", report["market_state"])
-    add("Mispricing", report["mispricing"])
-    add("Mechanism", report["mechanism"])
-    add("Positioning", report["positioning"])
-    add("Decision Logic", report["decision_logic"])
-    add("Conclusion", report["conclusion"])
-
-    # chart export
-    img_path = "chart.png"
-    try:
-        fig.write_image(img_path)
-        content.append(Spacer(1, 20))
-        content.append(Image(img_path, width=500, height=300))
-    except:
-        pass
+    for line in generate_report_text().split("\n"):
+        content.append(Paragraph(line, styles["Normal"]))
+        content.append(Spacer(1,10))
 
     doc.build(content)
-    return tmp.name
+    buffer.seek(0)
 
+    return buffer
 
-pdf_file = build_pdf(report)
+# =========================================================
+# DOWNLOAD BUTTON
+# =========================================================
+pdf = generate_pdf()
 
-with open(pdf_file, "rb") as f:
-    st.download_button("Download Full Report", f)
+st.download_button(
+    label="Download Full Report",
+    data=pdf,
+    file_name="Oil_Market_Report.pdf",
+    mime="application/pdf"
+)
