@@ -1,5 +1,5 @@
 import numpy as np
-from logging.logger import log
+from plogging.logger import log
 
 def generate_signals(returns, params):
     m = returns.rolling(20).mean()
