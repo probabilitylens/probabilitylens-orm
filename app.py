@@ -5,36 +5,39 @@ import plotly.graph_objects as go
 from datetime import datetime
 from io import BytesIO
 
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
+
+import plotly.io as pio
 
 st.set_page_config(layout="wide")
 
 # =========================
-# LOAD REAL WTI DATA (EIA XLS)
+# LOAD WTI DATA (FIXED)
 # =========================
 def load_wti():
     try:
-        # Try reading Excel (EIA format)
-        df = pd.read_excel("data/wti.xls", skiprows=2)
+        df = pd.read_excel("data/wti.xls")
 
-        # Standardize column names
+        # Take first two columns only
+        df = df.iloc[:, :2]
         df.columns = ["Date", "Price"]
 
-        df["Date"] = pd.to_datetime(df["Date"])
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df = df.dropna()
+
+        # Keep recent data only
+        df = df.sort_values("Date").tail(120)
 
         return df
 
     except:
-        # fallback (if file missing or format issue)
         dates = pd.date_range(end=datetime.today(), periods=60)
         price = np.cumsum(np.random.normal(0, 1, 60)) + 70
         return pd.DataFrame({"Date": dates, "Price": price})
 
 # =========================
-# SIDEBAR INPUTS
+# INPUTS
 # =========================
 st.sidebar.title("Input Parameters")
 
@@ -74,7 +77,7 @@ dispersion = max(inputs.values()) - min(inputs.values())
 conviction = "HIGH" if dispersion < 20 else "MEDIUM" if dispersion < 40 else "LOW"
 
 # =========================
-# EXPECTED MOVE MODEL
+# EXPECTED MOVE (MODEL)
 # =========================
 base_move = (score - 50) / 5
 alignment_boost = (inputs["alignment"] - 50) / 10
@@ -101,7 +104,7 @@ with col2:
 st.divider()
 
 # =========================
-# TOP DECISION BLOCK
+# DECISION BLOCK
 # =========================
 colA, colB, colC, colD = st.columns(4)
 
@@ -140,33 +143,7 @@ st.subheader("Decision Rationale")
 st.write(narrative)
 
 # =========================
-# SIGNAL ATTRIBUTION
-# =========================
-weights = {
-    "signal": 0.2,
-    "timing": 0.15,
-    "alignment": 0.2,
-    "crowding": 0.15,
-    "market_health": 0.15,
-    "capital": 0.15
-}
-
-rows = []
-for k, v in inputs.items():
-    rows.append({
-        "Factor": k.upper(),
-        "Score": int(v),
-        "Contribution": round(v * weights[k], 2),
-        "Interpretation": "Positive" if v > 60 else "Neutral"
-    })
-
-df_attr = pd.DataFrame(rows)
-
-st.subheader("Signal Attribution")
-st.dataframe(df_attr, use_container_width=True)
-
-# =========================
-# REAL DATA CHART
+# CHART (REAL DATA)
 # =========================
 df = load_wti()
 
@@ -191,7 +168,7 @@ st.subheader("Oil Price Context")
 st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# PDF GENERATOR
+# PDF (FIXED + UPGRADED)
 # =========================
 def generate_pdf():
 
@@ -206,18 +183,32 @@ def generate_pdf():
 
     elements.append(Paragraph("Decision", styles["Heading2"]))
     elements.append(Paragraph(
-        f"{regime} | {int(score)}% | {action} | Move: {expected_move_str}",
+        f"{regime} | {int(score)}% | {action} | Conviction: {conviction}",
         styles["Normal"]
     ))
 
-    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 10))
+
+    elements.append(Paragraph("Trade Expression", styles["Heading2"]))
+    elements.append(Paragraph(
+        f"""
+        Position: {"LONG" if expected_move > 0 else "SHORT"} WTI<br/>
+        Horizon: 2–4 weeks<br/>
+        Expected Move: {expected_move_str}<br/>
+        Risk: Positioning unwind / macro reversal
+        """,
+        styles["Normal"]
+    ))
+
+    elements.append(Spacer(1, 10))
 
     elements.append(Paragraph("Executive Summary", styles["Heading2"]))
     elements.append(Paragraph(narrative, styles["Normal"]))
 
     elements.append(Spacer(1, 12))
 
-    img_bytes = fig.to_image(format="png")
+    # Chart export (kaleido)
+    img_bytes = pio.to_image(fig, format="png")
     img_buffer = BytesIO(img_bytes)
     elements.append(Image(img_buffer, width=500, height=300))
 
