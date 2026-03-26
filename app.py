@@ -7,83 +7,30 @@ from datetime import datetime, timedelta
 st.set_page_config(layout="wide")
 
 # =========================
-# ⚙️ DEBUG MODE (TURN OFF LATER)
-# =========================
-DEBUG = True
-
-# =========================
-# 📥 ROBUST DATA LOADER
+# 📥 DATA LOADER (FIXED)
 # =========================
 @st.cache_data
 def load_wti_data():
     try:
-        raw = pd.read_excel("data/wti.xls", sheet_name=0)
+        # ✅ READ CORRECT SHEET
+        df = pd.read_excel("data/wti.xls", sheet_name="Data 1")
 
-        if DEBUG:
-            st.write("Raw Data Preview:")
-            st.write(raw.head(15))
-
-        # -------------------------
-        # 🔍 FIND HEADER ROW
-        # -------------------------
-        header_row = None
-
-        for i in range(len(raw)):
-            row = raw.iloc[i].astype(str).str.lower().tolist()
-
-            if any("date" in x for x in row) and (
-                any("price" in x for x in row) or any("value" in x for x in row)
-            ):
-                header_row = i
-                break
-
-        if header_row is None:
-            st.error("❌ Could not detect header row (Date / Price).")
-            return pd.DataFrame()
-
-        # -------------------------
-        # 📊 RELOAD WITH HEADER
-        # -------------------------
-        df = pd.read_excel("data/wti.xls", header=header_row)
-
-        # Normalize column names
-        df.columns = [str(c).lower().strip() for c in df.columns]
-
-        if DEBUG:
-            st.write("Detected Columns:", df.columns.tolist())
-
-        # -------------------------
-        # 🎯 IDENTIFY COLUMNS
-        # -------------------------
-        date_cols = [c for c in df.columns if "date" in c]
-        price_cols = [c for c in df.columns if "price" in c or "value" in c]
-
-        if not date_cols or not price_cols:
-            st.error("❌ Could not find Date/Price columns.")
-            return pd.DataFrame()
-
-        date_col = date_cols[0]
-        price_col = price_cols[0]
-
-        df = df[[date_col, price_col]]
+        # Keep only first 2 columns
+        df = df.iloc[:, :2]
         df.columns = ["Date", "Price"]
 
-        # -------------------------
-        # 🧹 CLEAN DATA
-        # -------------------------
+        # Convert types
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
 
+        # Clean
         df = df.dropna()
 
-        if DEBUG:
-            st.write("After Cleaning:", df.head())
-
         if len(df) == 0:
-            st.error("❌ Data became empty after cleaning.")
+            st.error("❌ Data empty after cleaning — check Excel format")
             return pd.DataFrame()
 
-        # Sort + tail
+        # Sort + take last 120 observations
         df = df.sort_values("Date")
         df = df.tail(120)
 
@@ -113,7 +60,7 @@ if df["Price"].iloc[-1] < 50:
 
 # Recency check
 if df["Date"].max() < datetime.today() - timedelta(days=5):
-    st.warning("⚠️ Data may be stale")
+    st.warning("⚠️ WTI data may be stale")
 
 # =========================
 # 🎛 INPUTS
@@ -148,9 +95,11 @@ else:
     regime = "NEAR TRIGGER"
     action = "ENTER"
 
+# Conviction (inverse dispersion)
 dispersion = np.std(inputs)
 conviction = int((1 - dispersion) * 100)
 
+# Expected move
 expected_move = np.clip(
     (score / 100) * (alignment + signal) * 10,
     -12, 12
@@ -180,10 +129,11 @@ def generate_narrative(signal, alignment, crowding):
 narrative = generate_narrative(signal, alignment, crowding)
 
 # =========================
-# 📊 CHART
+# 📊 CHART (CLEAN BASE)
 # =========================
 fig = go.Figure()
 
+# Price line (dominant)
 fig.add_trace(go.Scatter(
     x=df["Date"],
     y=df["Price"],
@@ -192,13 +142,14 @@ fig.add_trace(go.Scatter(
     name="WTI"
 ))
 
-# Safe NOW line
+# NOW line (safe)
 fig.add_vline(
     x=df["Date"].max(),
     line_width=2,
     line_color="white"
 )
 
+# Layout styling
 fig.update_layout(
     template="plotly_dark",
     paper_bgcolor="#0b0f14",
@@ -226,5 +177,6 @@ with col2:
     st.subheader("WTI Price")
     st.plotly_chart(fig, use_container_width=True)
 
+# Narrative
 st.subheader("Decision Rationale")
 st.write(narrative)
