@@ -172,7 +172,7 @@ def compute_model(f):
     return conviction, regime, expected_move
 
 # =========================
-# v5 + v6 EXTENSIONS
+# v5 EXTENSIONS
 # =========================
 def forward_signal(df):
     returns = df["returns"]
@@ -206,11 +206,11 @@ def trade_structure(conviction, vol):
     abs_c = abs(conviction)
 
     if abs_c < 0.3:
-        return "No Trade"
+        return "No Trade / Optionality"
     if abs_c > 0.7 and vol < 0.3:
-        return "Futures"
+        return "Futures / Linear"
     if vol > 0.5:
-        return "Long Vol"
+        return "Long Vol (Straddle)"
     return "Call Spread" if conviction > 0 else "Put Spread"
 
 # =========================
@@ -266,10 +266,55 @@ def portfolio_allocation(oil_conviction, cross_signals, correlations):
     return {k: v/total for k,v in weights.items()}
 
 # =========================
+# EXECUTION ENGINE (v7)
+# =========================
+def generate_positions(portfolio, price):
+    positions = {}
+    for asset, w in portfolio.items():
+        positions[asset] = w/price if asset=="OIL" else w
+    return positions
+
+
+def compute_pnl(df, positions):
+    oil_pos = positions.get("OIL", 0)
+    pnl = oil_pos * df["returns"]
+    return pnl, pnl.cumsum()
+
+
+def risk_metrics(pnl):
+    if len(pnl) < 10:
+        return {}
+
+    vol = pnl.std()*np.sqrt(252)
+    sharpe = pnl.mean()/(pnl.std()+EPS)*np.sqrt(252)
+    dd = (pnl.cumsum() - pnl.cumsum().cummax()).min()
+
+    return {"vol":vol,"sharpe":sharpe,"max_dd":dd}
+
+
+def backtest(df):
+    res = []
+    for i in range(60,len(df)-1):
+        sub = df.iloc[:i]
+        try:
+            f = compute_factors(sub)
+            c,_ ,_ = compute_model(f)
+            fwd = forward_signal(sub)
+            macro = macro_regime(sub)
+            c_adj = adjust_for_macro(c,macro)
+            comb = 0.7*c_adj + 0.3*fwd
+            pos = np.sign(comb)
+            nxt = df["returns"].iloc[i+1]
+            res.append(pos*nxt)
+        except:
+            continue
+    return pd.Series(res)
+
+# =========================
 # UI
 # =========================
 st.set_page_config(layout="wide")
-st.title("ProbabilityLens — Oil Risk Monitor (v6)")
+st.title("ProbabilityLens — Oil Risk Monitor (v7)")
 
 df, source = fetch_eia_data()
 if df is None:
@@ -289,23 +334,28 @@ try:
 
     fwd = forward_signal(df)
     macro = macro_regime(df)
-    conviction_adj = adjust_for_macro(conviction, macro)
-    combined = 0.7 * conviction_adj + 0.3 * fwd
+    c_adj = adjust_for_macro(conviction, macro)
+    combined = 0.7*c_adj + 0.3*fwd
 
     trade = trade_structure(combined, f["vol"])
 
-    # v6
     cross_data = fetch_cross_assets()
     correlations = compute_correlations(df, cross_data)
     cross_signals = cross_asset_signals(cross_data)
     portfolio = portfolio_allocation(combined, cross_signals, correlations)
 
-    # KPIs
+    # EXECUTION
+    positions = generate_positions(portfolio, df["price"].iloc[-1])
+    pnl, cum_pnl = compute_pnl(df, positions)
+    risk = risk_metrics(pnl)
+    bt = backtest(df)
+
+    # KPI
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Conviction", f"{combined:.2f}")
     c2.metric("Regime", regime)
-    c3.metric("Expected Move", f"{move:.2%}")
-    c4.metric("Volatility", f"{f['vol']:.2%}")
+    c3.metric("Move", f"{move:.2%}")
+    c4.metric("Vol", f"{f['vol']:.2%}")
 
     c5,c6,c7 = st.columns(3)
     c5.metric("Forward", f"{fwd:.2f}")
@@ -316,7 +366,7 @@ try:
 
     with left:
         st.subheader("Decision")
-        st.write(f"{trade}")
+        st.write(trade)
 
     with right:
         st.subheader("Portfolio")
@@ -324,6 +374,21 @@ try:
 
     st.subheader("Correlations")
     st.bar_chart(correlations)
+
+    st.subheader("Execution")
+    st.write(positions)
+
+    st.subheader("PnL")
+    st.line_chart(cum_pnl)
+
+    if risk:
+        r1,r2,r3 = st.columns(3)
+        r1.metric("Vol", f"{risk['vol']:.2%}")
+        r2.metric("Sharpe", f"{risk['sharpe']:.2f}")
+        r3.metric("Drawdown", f"{risk['max_dd']:.2%}")
+
+    st.subheader("Backtest")
+    st.line_chart(bt.cumsum())
 
 except Exception as e:
     st.error(f"System diagnostic: {str(e)}")
