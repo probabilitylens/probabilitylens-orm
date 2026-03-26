@@ -4,6 +4,7 @@ import numpy as np
 from io import BytesIO
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+import yfinance as yf
 
 # =========================
 # CONFIG
@@ -17,8 +18,7 @@ EPS = 1e-8
 # CORE EXTRACTION LOGIC
 # =========================
 def extract_time_series(df):
-    best_series = None
-    max_len = 0
+    best_series, max_len = None, 0
 
     for col_date in df.columns:
         dates = pd.to_datetime(df[col_date], errors='coerce')
@@ -35,8 +35,7 @@ def extract_time_series(df):
                     "price": vals[mask]
                 }).sort_values("date")
 
-                best_series = temp
-                max_len = len(temp)
+                best_series, max_len = temp, len(temp)
 
     return best_series
 
@@ -47,33 +46,30 @@ def extract_time_series(df):
 def fetch_eia_data():
     try:
         tables = pd.read_html(EIA_URL)
-
         best, max_len = None, 0
+
         for t in tables:
             extracted = extract_time_series(t)
             if extracted is not None and len(extracted) > max_len:
                 best, max_len = extracted, len(extracted)
 
         if best is None or len(best) < MIN_OBS:
-            raise ValueError("EIA data insufficient")
+            raise ValueError("EIA insufficient")
 
         best = best.drop_duplicates("date").sort_values("date")
-
-        if not best["date"].is_monotonic_increasing:
-            best = best.sort_values("date")
 
         return best.reset_index(drop=True), "EIA Live"
 
     except Exception as e:
-        return None, f"EIA fetch failed: {str(e)}"
+        return None, f"EIA failed: {str(e)}"
 
 
 @st.cache_data
 def load_local():
     try:
         xls = pd.ExcelFile(DEFAULT_DATA_PATH)
-
         best, max_len = None, 0
+
         for sheet in xls.sheet_names:
             df = xls.parse(sheet)
             extracted = extract_time_series(df)
@@ -82,17 +78,12 @@ def load_local():
                 best, max_len = extracted, len(extracted)
 
         if best is None or len(best) < MIN_OBS:
-            raise ValueError("Local data insufficient")
-
-        best = best.drop_duplicates("date").sort_values("date")
-
-        if not best["date"].is_monotonic_increasing:
-            best = best.sort_values("date")
+            raise ValueError("Local insufficient")
 
         return best.reset_index(drop=True), "Local Backup"
 
     except Exception as e:
-        return None, f"Local load failed: {str(e)}"
+        return None, f"Local failed: {str(e)}"
 
 # =========================
 # FEATURE ENGINE
@@ -111,7 +102,7 @@ def compute_features(df):
     df = df.dropna()
 
     if len(df) < MIN_OBS:
-        raise ValueError("Feature layer insufficient")
+        raise ValueError("Feature insufficient")
 
     return df
 
@@ -181,46 +172,16 @@ def compute_model(f):
     return conviction, regime, expected_move
 
 # =========================
-# SCENARIO ENGINE
-# =========================
-def compute_scenarios(conviction, vol):
-    base = 0.5 + conviction * 0.3
-    bull = max(0, base)
-    bear = max(0, 1 - base)
-
-    total = bull + bear
-    bull /= total
-    bear /= total
-    base = 1 - (bull + bear) * 0.5
-
-    return {"bull": bull, "base": base, "bear": bear}
-
-# =========================
-# POSITIONING MODEL
-# =========================
-def compute_position(conviction, vol, crowding):
-    raw_size = abs(conviction) / (vol + EPS)
-    adj = raw_size * (1 - abs(crowding))
-    direction = "LONG" if conviction > 0 else "SHORT" if conviction < 0 else "FLAT"
-    return direction, np.tanh(adj)
-
-# =========================
-# v5 FORWARD SIGNAL
+# v5 + v6 EXTENSIONS
 # =========================
 def forward_signal(df):
     returns = df["returns"]
     short_trend = np.sign(df["trend_20"].iloc[-1])
-    recent_returns = returns.tail(10)
-
-    persistence = np.mean(np.sign(recent_returns) == short_trend)
+    persistence = np.mean(np.sign(returns.tail(10)) == short_trend)
     drift = returns.tail(20).mean()
+    return np.clip(0.6*persistence + 0.4*np.tanh(drift*50), -1, 1)
 
-    signal = 0.6 * persistence + 0.4 * np.tanh(drift * 50)
-    return np.clip(signal, -1, 1)
 
-# =========================
-# v5 MACRO OVERLAY
-# =========================
 def macro_regime(df):
     vol = df["vol_20"].iloc[-1]
     trend = df["trend_60"].iloc[-1]
@@ -235,101 +196,80 @@ def macro_regime(df):
 
 
 def adjust_for_macro(conviction, regime):
-    if regime == "STRESS":
-        return conviction * 0.6
-    if regime == "EXPANSION":
-        return conviction * 1.2
-    if regime == "SLOWDOWN":
-        return conviction * 0.8
+    if regime == "STRESS": return conviction * 0.6
+    if regime == "EXPANSION": return conviction * 1.2
+    if regime == "SLOWDOWN": return conviction * 0.8
     return conviction
 
-# =========================
-# v5 TRADE STRUCTURE
-# =========================
+
 def trade_structure(conviction, vol):
     abs_c = abs(conviction)
 
     if abs_c < 0.3:
-        return "No Trade / Optionality"
-
+        return "No Trade"
     if abs_c > 0.7 and vol < 0.3:
-        return "Futures / Linear Exposure"
-
+        return "Futures"
     if vol > 0.5:
-        return "Long Vol (Straddle/Strangle)"
-
-    if conviction > 0:
-        return "Call Spread"
-
-    if conviction < 0:
-        return "Put Spread"
-
-    return "Wait"
+        return "Long Vol"
+    return "Call Spread" if conviction > 0 else "Put Spread"
 
 # =========================
-# INTERPRETATION ENGINE
+# CROSS-ASSET ENGINE (v6)
 # =========================
-def interpret(f, regime, position, macro):
-    narrative = []
+@st.cache_data(ttl=86400)
+def fetch_cross_assets():
+    tickers = {
+        "DXY": "DX-Y.NYB",
+        "SPX": "^GSPC",
+        "TNX": "^TNX"
+    }
 
-    if f["signal"] > 0.7:
-        narrative.append("Trend strength is pronounced across time horizons.")
+    data = {}
+    for name, ticker in tickers.items():
+        df = yf.download(ticker, period="2y", progress=False)
+        if df is None or df.empty:
+            continue
 
-    if f["health"] == -1:
-        narrative.append("Volatility regime is elevated, reducing reliability.")
+        df = df.reset_index()[["Date", "Close"]]
+        df.columns = ["date", "price"]
+        df["returns"] = np.log(df["price"] / df["price"].shift(1))
+        data[name] = df.dropna()
 
-    if f["crowding"] < -0.5:
-        narrative.append("Positioning appears crowded.")
+    return data
 
-    narrative.append(f"Macro regime is {macro}, conditioning conviction.")
 
-    narrative.append(f"Recommended positioning is {position[0]} with calibrated sizing.")
+def compute_correlations(oil_df, cross_data):
+    correlations = {}
+    for name, df in cross_data.items():
+        merged = pd.merge(oil_df, df, on="date", suffixes=("_oil","_x"))
+        if len(merged) > 20:
+            correlations[name] = merged["returns_oil"].corr(merged["returns_x"])
+    return correlations
 
-    return " ".join(narrative)
 
-# =========================
-# REPORT ENGINE (UPGRADED)
-# =========================
-def generate_report(regime, conviction, expected_move, scenarios, position, narrative, source, fwd, trade):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer)
-    styles = getSampleStyleSheet()
+def cross_asset_signals(cross_data):
+    signals = {}
+    for name, df in cross_data.items():
+        trend = df["price"].iloc[-1] / df["price"].rolling(20).mean().iloc[-1] - 1
+        signals[name] = np.tanh(trend * 3)
+    return signals
 
-    def sec(title, txt):
-        return [Paragraph(f"<b>{title}</b>", styles["Heading2"]),
-                Spacer(1, 10),
-                Paragraph(txt, styles["BodyText"]),
-                Spacer(1, 20)]
 
-    content = []
+def portfolio_allocation(oil_conviction, cross_signals, correlations):
+    weights = {"OIL": abs(oil_conviction)}
 
-    content += sec("Executive Summary",
-        f"{regime} regime with conviction {conviction:.2f}. Expected move {expected_move:.2%}.")
+    for k in cross_signals:
+        corr = correlations.get(k, 0)
+        weights[k] = abs(cross_signals[k]) * (1 - abs(corr))
 
-    content += sec("Forward Outlook",
-        f"Forward signal = {fwd:.2f}, indicating near-term directional bias.")
-
-    content += sec("Scenario Analysis",
-        f"Bull: {scenarios['bull']:.0%}, Base: {scenarios['base']:.0%}, Bear: {scenarios['bear']:.0%}")
-
-    content += sec("Positioning",
-        f"Direction: {position[0]}, Size: {position[1]:.2f}")
-
-    content += sec("Trade Expression", trade)
-
-    content += sec("Narrative", narrative)
-
-    content += sec("Data Source", source)
-
-    doc.build(content)
-    buffer.seek(0)
-    return buffer
+    total = sum(weights.values()) + EPS
+    return {k: v/total for k,v in weights.items()}
 
 # =========================
 # UI
 # =========================
 st.set_page_config(layout="wide")
-st.title("ProbabilityLens — Oil Risk Monitor (v5)")
+st.title("ProbabilityLens — Oil Risk Monitor (v6)")
 
 df, source = fetch_eia_data()
 if df is None:
@@ -339,54 +279,51 @@ if df is None:
     st.error(source)
     st.stop()
 
-st.caption(f"Data Source: {source}")
-st.caption(f"Last Observation: {df['date'].iloc[-1].date()}")
+st.caption(f"Source: {source}")
+st.caption(f"Last Date: {df['date'].iloc[-1].date()}")
 
 try:
     df = compute_features(df)
-    factors = compute_factors(df)
-    conviction, regime, expected_move = compute_model(factors)
+    f = compute_factors(df)
+    conviction, regime, move = compute_model(f)
 
-    # v5 extensions
     fwd = forward_signal(df)
     macro = macro_regime(df)
     conviction_adj = adjust_for_macro(conviction, macro)
     combined = 0.7 * conviction_adj + 0.3 * fwd
 
-    scenarios = compute_scenarios(combined, factors["vol"])
-    position = compute_position(combined, factors["vol"], factors["crowding"])
-    trade = trade_structure(combined, factors["vol"])
+    trade = trade_structure(combined, f["vol"])
 
-    narrative = interpret(factors, regime, position, macro)
+    # v6
+    cross_data = fetch_cross_assets()
+    correlations = compute_correlations(df, cross_data)
+    cross_signals = cross_asset_signals(cross_data)
+    portfolio = portfolio_allocation(combined, cross_signals, correlations)
 
-    # KPI STRIP
-    c1, c2, c3, c4 = st.columns(4)
+    # KPIs
+    c1,c2,c3,c4 = st.columns(4)
     c1.metric("Conviction", f"{combined:.2f}")
     c2.metric("Regime", regime)
-    c3.metric("Expected Move", f"{expected_move:.2%}")
-    c4.metric("Volatility", f"{factors['vol']:.2%}")
+    c3.metric("Expected Move", f"{move:.2%}")
+    c4.metric("Volatility", f"{f['vol']:.2%}")
 
-    # NEW v5 ROW
-    c5, c6, c7 = st.columns(3)
-    c5.metric("Forward Signal", f"{fwd:.2f}")
-    c6.metric("Macro Regime", macro)
-    c7.metric("Trade Structure", trade)
+    c5,c6,c7 = st.columns(3)
+    c5.metric("Forward", f"{fwd:.2f}")
+    c6.metric("Macro", macro)
+    c7.metric("Trade", trade)
 
-    # MAIN GRID
-    left, right = st.columns([2,1])
+    left,right = st.columns([2,1])
 
     with left:
         st.subheader("Decision")
-        st.markdown(f"## {position[0]} ({position[1]:.2f})")
-        st.write(narrative)
+        st.write(f"{trade}")
 
     with right:
-        st.subheader("Scenarios")
-        st.bar_chart(scenarios)
+        st.subheader("Portfolio")
+        st.bar_chart(portfolio)
 
-    # REPORT
-    pdf = generate_report(regime, combined, expected_move, scenarios, position, narrative, source, fwd, trade)
-    st.download_button("Download Report", pdf, "ProbabilityLens_v5_Report.pdf")
+    st.subheader("Correlations")
+    st.bar_chart(correlations)
 
 except Exception as e:
     st.error(f"System diagnostic: {str(e)}")
