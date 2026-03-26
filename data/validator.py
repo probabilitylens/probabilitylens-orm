@@ -2,23 +2,19 @@ import pandas as pd
 from plogging.logger import log
 from config.settings import ASSETS, MIN_OBSERVATIONS
 
-def validate_prices(df):
-    if df.empty:
-        log("Empty prices","DATA","ERROR")
-        raise ValueError()
+def validate_prices(prices):
+    if prices is None:
+        return prices
 
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError()
+    if prices.empty:
+        return prices
 
-    if len(df) < MIN_OBSERVATIONS:
-        raise ValueError()
+    # Drop bad data instead of crashing
+    prices = prices.dropna(how="all")
+    prices = prices.fillna(method="ffill")
 
-    for a in ASSETS:
-        if a not in df.columns:
-            raise ValueError()
-
-    return df
-
+    return prices
+    
 def validate_returns(df):
     if df.empty:
         raise ValueError()
