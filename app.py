@@ -11,6 +11,7 @@ import random
 # =========================
 EPS = 1e-8
 MIN_OBS = 50
+BASE_CAPITAL = 100000
 
 # RISK CONFIG (v9)
 MAX_POSITION_SIZE = 0.25
@@ -23,25 +24,11 @@ KILL_SWITCH = False
 ALPACA_KEY = "YOUR_API_KEY"
 ALPACA_SECRET = "YOUR_SECRET"
 BASE_URL = "https://paper-api.alpaca.markets"
-EXECUTE = False
+EXECUTE = False  # 🔴 stays OFF by default
 
 # =========================
-# DATA (v1-v4)
+# DATA (v1–v4)
 # =========================
-def extract_time_series(df):
-    best, max_len = None, 0
-    for c1 in df.columns:
-        d = pd.to_datetime(df[c1], errors='coerce')
-        if d.notna().sum() < 10:
-            continue
-        for c2 in df.columns:
-            v = pd.to_numeric(df[c2], errors='coerce')
-            m = d.notna() & v.notna()
-            if m.sum() > max_len:
-                best = pd.DataFrame({"date": d[m], "price": v[m]}).sort_values("date")
-                max_len = len(best)
-    return best
-
 @st.cache_data
 def load_data():
     df = yf.download("CL=F", period="5y", progress=False)
@@ -62,10 +49,15 @@ def compute_features(df):
     return df.dropna()
 
 # =========================
-# FACTORS (v3)
+# FACTORS
 # =========================
 def compute_factors(df):
     l = df.iloc[-1]
+    vol = l["vol_20"]
+
+    # sanity cap (critical fix)
+    vol = min(vol, 0.60)
+
     return {
         "signal": np.tanh(2*l["trend_20"]+l["trend_60"]),
         "timing": np.clip(-abs(l["zscore"]),-1,1),
@@ -73,12 +65,12 @@ def compute_factors(df):
         "alignment": 1 if np.sign(l["trend_20"])==np.sign(l["trend_60"]) else -1,
         "crowding": -np.tanh(l["zscore"]),
         "health": 0,
-        "capital": np.tanh(l["trend_20"]/(l["vol_20"]+EPS)),
-        "vol": l["vol_20"]
+        "capital": np.tanh(l["trend_20"]/(vol+EPS)),
+        "vol": vol
     }
 
 # =========================
-# MODEL (v3)
+# MODEL
 # =========================
 def compute_model(f):
     w = dict(signal=.25,timing=.15,confirmation=.15,alignment=.1,crowding=.1,health=.15,capital=.1)
@@ -87,7 +79,7 @@ def compute_model(f):
     return c, regime
 
 # =========================
-# FORWARD + MACRO (v5)
+# v5
 # =========================
 def forward_signal(df):
     r=df["returns"]
@@ -103,63 +95,72 @@ def macro_regime(df):
 # =========================
 # STRATEGIES (v10)
 # =========================
-def strategy_trend(df): return compute_model(compute_factors(df))[0]
-def strategy_mr(df): return -np.tanh(df["zscore"].iloc[-1])
-def strategy_breakout(df):
-    p=df["price"].iloc[-1]
-    hi=df["price"].rolling(20).max().iloc[-1]
-    lo=df["price"].rolling(20).min().iloc[-1]
-    return 1 if p>=hi else -1 if p<=lo else 0
-
 def strategy_signals(df):
     return {
-        "trend": strategy_trend(df),
-        "mean_reversion": strategy_mr(df),
-        "breakout": strategy_breakout(df)
+        "trend": compute_model(compute_factors(df))[0],
+        "mean_reversion": -np.tanh(df["zscore"].iloc[-1]),
+        "breakout": np.sign(df["trend_20"].iloc[-1])
     }
 
-# =========================
-# ALLOCATION (v6+v10)
-# =========================
 def allocate_strategies(s):
     w={k:abs(v) for k,v in s.items()}
     tot=sum(w.values())+EPS
     return {k:v/tot for k,v in w.items()}
 
+# =========================
+# PORTFOLIO (v6)
+# =========================
 def portfolio_allocation(c):
     return {"OIL": abs(c)}
 
 # =========================
-# RISK ENGINE (v9)
+# RISK ENGINE (v9 FIXED)
 # =========================
-def risk_engine(p, vol, pnl):
+def risk_engine(p, vol, pnl, drawdown):
     if KILL_SWITCH:
-        return {}, "KILL"
-    if pnl.tail(5).sum() < STOP_LOSS_THRESHOLD:
-        return {}, "STOP"
+        return {}, "KILL_SWITCH"
+
+    if pnl.tail(5).sum() / BASE_CAPITAL < STOP_LOSS_THRESHOLD:
+        return {}, "STOP_LOSS"
+
+    if drawdown < MAX_DRAWDOWN:
+        return {}, "DRAWDOWN_LIMIT"
+
+    if vol > MAX_PORTFOLIO_VOL:
+        p = {k: v * 0.5 for k, v in p.items()}
+        return p, "DEGRADED"
+
     p={k:min(v,MAX_POSITION_SIZE) for k,v in p.items()}
-    return p,"OK"
+
+    return p,"APPROVED"
 
 # =========================
-# EXECUTION (v8)
+# EXECUTION (v8 IMPROVED)
 # =========================
 def place_order(symbol, qty):
     if not EXECUTE:
-        return "blocked"
-    return "sent"
+        return {"status": "BLOCKED", "reason": "EXECUTE=False"}
+    return {"status": "SENT", "symbol": symbol, "qty": qty}
 
 # =========================
-# PnL (v7)
+# PnL ENGINE (v7 FIXED)
 # =========================
-def compute_pnl(df):
-    pnl=df["returns"]
-    return pnl, pnl.cumsum()
+def compute_pnl(df, signal):
+    returns = df["returns"]
+    position = np.sign(signal)
+
+    pnl = position * returns * BASE_CAPITAL
+    cum = pnl.cumsum()
+
+    drawdown = (cum - cum.cummax()) / BASE_CAPITAL
+
+    return pnl, cum, drawdown
 
 # =========================
-# DASHBOARD (v13)
+# UI
 # =========================
 st.set_page_config(layout="wide")
-st.title("ProbabilityLens — Institutional Dashboard (v13)")
+st.title("ProbabilityLens — Institutional Dashboard (v13.1)")
 
 df = load_data()
 df = compute_features(df)
@@ -175,19 +176,27 @@ combined = 0.7*conviction + 0.3*fwd
 sigs = strategy_signals(df)
 strat_w = allocate_strategies(sigs)
 
-portfolio = portfolio_allocation(combined)
+portfolio_raw = portfolio_allocation(combined)
 
-pnl, cum = compute_pnl(df)
-portfolio, risk_status = risk_engine(portfolio, f["vol"], pnl)
+# PnL FIXED
+pnl, cum, drawdown = compute_pnl(df, combined)
+
+# Risk
+portfolio, risk_status = risk_engine(
+    portfolio_raw,
+    f["vol"],
+    pnl,
+    drawdown.iloc[-1]
+)
 
 # =========================
 # ROW 1 — SYSTEM
 # =========================
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("System","RUNNING")
-c2.metric("Risk",risk_status)
+c2.metric("Risk Engine",risk_status)
 c3.metric("Kill Switch",str(KILL_SWITCH))
-c4.metric("Drawdown",f"{(cum-cum.cummax()).min():.2%}")
+c4.metric("Drawdown",f"{drawdown.min():.2%}")
 
 # =========================
 # ROW 2 — CORE
@@ -202,7 +211,7 @@ c8.metric("Vol",f"{f['vol']:.2%}")
 # ROW 3 — PORTFOLIO
 # =========================
 left,right = st.columns(2)
-left.subheader("Portfolio")
+left.subheader("Portfolio Allocation")
 left.bar_chart(portfolio)
 
 right.subheader("Strategy Allocation")
@@ -213,19 +222,19 @@ right.bar_chart(strat_w)
 # =========================
 r1,r2,r3 = st.columns(3)
 r1.metric("Max Position",f"{MAX_POSITION_SIZE:.0%}")
-r2.metric("Max DD",f"{MAX_DRAWDOWN:.0%}")
+r2.metric("Max DD Limit",f"{MAX_DRAWDOWN:.0%}")
 r3.metric("Stop Loss",f"{STOP_LOSS_THRESHOLD:.0%}")
 
 # =========================
-# ROW 5 — PERFORMANCE
+# ROW 5 — PERFORMANCE (FIXED)
 # =========================
-st.subheader("PnL")
+st.subheader("PnL (Capital-Based)")
 st.line_chart(cum)
 
 # =========================
-# ROW 6 — REALTIME SIM
+# ROW 6 — SIGNAL EVOLUTION (FIXED LABEL)
 # =========================
-def realtime(df):
+def signal_evolution(df):
     out=[]
     for i in range(60,len(df)):
         sub=df.iloc[:i]
@@ -233,13 +242,21 @@ def realtime(df):
         out.append(c)
     return pd.Series(out)
 
-st.subheader("Realtime Simulation")
-st.line_chart(realtime(df))
+st.subheader("Signal Evolution (Not PnL)")
+st.line_chart(signal_evolution(df))
 
 # =========================
-# EXECUTION PANEL
+# EXECUTION PANEL (FIXED)
 # =========================
 st.subheader("Execution")
+
+exec_info = {
+    "execution_enabled": EXECUTE,
+    "risk_status": risk_status,
+    "kill_switch": KILL_SWITCH
+}
+st.write(exec_info)
+
 if st.button("Execute Trade"):
-    res = place_order("USO",10)
-    st.write(res)
+    result = place_order("USO", 10)
+    st.write(result)
