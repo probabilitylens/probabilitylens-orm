@@ -3,8 +3,23 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import letter
+import tempfile
+import os
 
 st.set_page_config(layout="wide")
+
+# =========================
+# 🖼 LOGO (FIXED)
+# =========================
+logo_path = "Logo.png"
+
+if os.path.exists(logo_path):
+    st.image(logo_path, width=180)
+else:
+    st.warning("Logo not found")
 
 # =========================
 # 📥 DATA LOADER (FIXED)
@@ -12,32 +27,26 @@ st.set_page_config(layout="wide")
 @st.cache_data
 def load_wti_data():
     try:
-        # ✅ READ CORRECT SHEET
         df = pd.read_excel("data/wti.xls", sheet_name="Data 1")
 
-        # Keep only first 2 columns
         df = df.iloc[:, :2]
         df.columns = ["Date", "Price"]
 
-        # Convert types
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
 
-        # Clean
         df = df.dropna()
 
-        if len(df) == 0:
-            st.error("❌ Data empty after cleaning — check Excel format")
+        if df.empty:
             return pd.DataFrame()
 
-        # Sort + take last 120 observations
         df = df.sort_values("Date")
         df = df.tail(120)
 
         return df
 
     except Exception as e:
-        st.error(f"❌ Data loading failed: {e}")
+        st.error(f"Data loading failed: {e}")
         return pd.DataFrame()
 
 
@@ -46,7 +55,7 @@ df = load_wti_data()
 # =========================
 # 🚨 VALIDATION
 # =========================
-if df is None or len(df) == 0:
+if df is None or df.empty:
     st.error("WTI dataset is empty — check Excel parsing.")
     st.stop()
 
@@ -54,11 +63,9 @@ if len(df) < 10:
     st.error("Not enough data after cleaning.")
     st.stop()
 
-# Sanity check
 if df["Price"].iloc[-1] < 50:
     st.warning("⚠️ WTI price looks too low — possible wrong dataset")
 
-# Recency check
 if df["Date"].max() < datetime.today() - timedelta(days=5):
     st.warning("⚠️ WTI data may be stale")
 
@@ -75,15 +82,22 @@ crowding = st.sidebar.slider("Crowding", 0.0, 1.0, 0.5)
 market_health = st.sidebar.slider("Market Health", 0.0, 1.0, 0.5)
 capital = st.sidebar.slider("Capital Availability", 0.0, 1.0, 0.5)
 
-inputs = np.array([
-    signal, timing, confirmation,
-    alignment, crowding, market_health, capital
-])
+inputs = {
+    "Signal": signal,
+    "Timing": timing,
+    "Confirmation": confirmation,
+    "Alignment": alignment,
+    "Crowding": crowding,
+    "Market Health": market_health,
+    "Capital": capital
+}
+
+values = np.array(list(inputs.values()))
 
 # =========================
 # 🧠 MODEL
 # =========================
-score = inputs.mean() * 100
+score = values.mean() * 100
 
 if score < 50:
     regime = "PREPARATION"
@@ -95,45 +109,29 @@ else:
     regime = "NEAR TRIGGER"
     action = "ENTER"
 
-# Conviction (inverse dispersion)
-dispersion = np.std(inputs)
-conviction = int((1 - dispersion) * 100)
+conviction = int((1 - np.std(values)) * 100)
 
-# Expected move
 expected_move = np.clip(
     (score / 100) * (alignment + signal) * 10,
     -12, 12
 )
 
 # =========================
-# 🧾 NARRATIVE
+# 🧾 TRADE EXPRESSION
 # =========================
-def generate_narrative(signal, alignment, crowding):
-    if signal > 0.7 and crowding > 0.6:
-        return (
-            "The market is currently pricing oil under a stable demand assumption, "
-            "while leading indicators suggest deterioration in marginal demand. "
-            "Positioning remains extended, increasing the probability of a sharp "
-            "downside repricing as expectations adjust."
-        )
-    elif alignment > 0.6:
-        return (
-            "Cross-asset signals are increasingly aligned, suggesting the current "
-            "pricing regime may not fully reflect underlying macro conditions."
-        )
-    else:
-        return (
-            "Macro signals remain fragmented, with no strong consensus across inputs."
-        )
+direction = "SHORT" if signal > 0.6 else "LONG" if signal < 0.4 else "NEUTRAL"
 
-narrative = generate_narrative(signal, alignment, crowding)
+trade_expression = f"""
+Direction: {direction}
+Horizon: 2–6 weeks
+Conviction: {conviction}%
+"""
 
 # =========================
-# 📊 CHART (CLEAN BASE)
+# 📊 CHART
 # =========================
 fig = go.Figure()
 
-# Price line (dominant)
 fig.add_trace(go.Scatter(
     x=df["Date"],
     y=df["Price"],
@@ -142,14 +140,12 @@ fig.add_trace(go.Scatter(
     name="WTI"
 ))
 
-# NOW line (safe)
 fig.add_vline(
     x=df["Date"].max(),
     line_width=2,
     line_color="white"
 )
 
-# Layout styling
 fig.update_layout(
     template="plotly_dark",
     paper_bgcolor="#0b0f14",
@@ -159,6 +155,15 @@ fig.update_layout(
     xaxis=dict(showgrid=False),
     yaxis=dict(showgrid=False)
 )
+
+# =========================
+# 📊 SIGNAL ATTRIBUTION
+# =========================
+attr_df = pd.DataFrame({
+    "Factor": list(inputs.keys()),
+    "Score": list(inputs.values()),
+    "Contribution": values / values.sum()
+})
 
 # =========================
 # 🖥 UI
@@ -173,10 +178,49 @@ with col1:
     st.metric("Conviction", f"{conviction}%")
     st.metric("Expected Move", f"{expected_move:.1f}%")
 
+    st.subheader("Trade Expression")
+    st.write(trade_expression)
+
 with col2:
     st.subheader("WTI Price")
     st.plotly_chart(fig, use_container_width=True)
 
-# Narrative
-st.subheader("Decision Rationale")
-st.write(narrative)
+# Attribution table
+st.subheader("Signal Attribution")
+st.dataframe(attr_df, use_container_width=True)
+
+# =========================
+# 📄 PDF EXPORT (WORKING)
+# =========================
+def generate_pdf():
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    doc = SimpleDocTemplate(temp_file.name, pagesize=letter)
+
+    styles = getSampleStyleSheet()
+    content = []
+
+    content.append(Paragraph("ProbabilityLens – Oil Risk Monitor", styles["Title"]))
+    content.append(Spacer(1, 12))
+
+    content.append(Paragraph(f"Regime: {regime}", styles["Normal"]))
+    content.append(Paragraph(f"Action: {action}", styles["Normal"]))
+    content.append(Paragraph(f"Conviction: {conviction}%", styles["Normal"]))
+    content.append(Paragraph(f"Expected Move: {expected_move:.1f}%", styles["Normal"]))
+
+    content.append(Spacer(1, 12))
+    content.append(Paragraph("Trade Expression", styles["Heading2"]))
+    content.append(Paragraph(trade_expression, styles["Normal"]))
+
+    doc.build(content)
+
+    return temp_file.name
+
+
+pdf_path = generate_pdf()
+
+with open(pdf_path, "rb") as f:
+    st.download_button(
+        "Download PDF Report",
+        f,
+        file_name="oil_risk_report.pdf"
+    )
