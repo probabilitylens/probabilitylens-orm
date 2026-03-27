@@ -1,4 +1,3 @@
-from .models import EvaluateRequest, ComputedState
 import os
 import pickle
 
@@ -9,7 +8,7 @@ def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "rb") as f:
             return pickle.load(f)
-    return ComputedState()
+    return {"positions": None, "equity": 0}
 
 
 def save_state(state):
@@ -17,14 +16,19 @@ def save_state(state):
         pickle.dump(state, f)
 
 
-def initialize_state():
-    return ComputedState()
+def initialize_state(prices=None):
+    return {"positions": None, "equity": 0}
 
 
 def update_state(state, positions=None, equity=None):
+
+    if state is None:
+        state = {"positions": None, "equity": 0}
+
     if positions is not None:
-        state.positions = positions
+        state["positions"] = positions
+
     if equity is not None:
-        state.equity = equity
-    save_state(state)
+        state["equity"] = equity
+
     return state
