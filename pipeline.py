@@ -1,144 +1,87 @@
+# pipeline.py
+
 import pandas as pd
 
-# ==========================================================
-# IMPORTS (MATCH YOUR STRUCTURE)
-# ==========================================================
-
-# Data layer
-from data.loader import load_market_data, compute_returns, _generate_fallback_data
-
-# Features / signals
+from data.loader import load_data
 from features.signals import generate_signals
-
-# Portfolio
 from portfolio.construction import construct_portfolio
-
-# PnL
 from pnl.engine import compute_pnl
 
 
-# ==========================================================
-# MAIN PIPELINE
-# ==========================================================
-def run_pipeline(params: dict):
+def run_pipeline(params: dict) -> dict:
     """
-    Main orchestrator for ProbabilityLens
+    Main orchestrator for ProbabilityLens pipeline.
+
+    Guarantees:
+    - Always returns a dict with required keys
+    - Never silently fails
     """
 
-    # ----------------------------
-    # PARAMS
-    # ----------------------------
-    tickers = params.get("tickers", [])
-    start = params.get("start")
-    end = params.get("end")
-    capital = params.get("capital", 100000)
-    config = params.get("config", {})
-
-    print("\n==============================")
-    print("🚀 RUN PIPELINE START")
-    print("==============================")
-
-    # ======================================================
+    # ---------------------------
     # 1. LOAD DATA
-    # ======================================================
-    prices = load_market_data(tickers, start, end)
+    # ---------------------------
+    prices = load_data(params)
 
-    print("\n===== DATA CHECK =====")
-    print("TYPE:", type(prices))
-    print("PRICES SHAPE:", getattr(prices, "shape", "N/A"))
-
-    if isinstance(prices, pd.DataFrame):
-        print(prices.head())
-    else:
-        print("⚠️ Prices is not a DataFrame")
-
-    # 🔥 FIX: type-safe + fallback recovery
     if not isinstance(prices, pd.DataFrame) or prices.empty:
-        print("⚠️ Prices invalid in pipeline — forcing fallback")
+        raise ValueError("Invalid prices data")
 
-        prices = _generate_fallback_data(tickers, start, end)
+    print("DATA CHECK:", prices.shape)
 
-        print("FALLBACK TYPE:", type(prices))
-        print("FALLBACK SHAPE:", getattr(prices, "shape", "N/A"))
-
-        if not isinstance(prices, pd.DataFrame) or prices.empty:
-            raise ValueError("❌ Even fallback failed — critical error")
-
-    # ======================================================
+    # ---------------------------
     # 2. RETURNS
-    # ======================================================
-    returns = compute_returns(prices)
+    # ---------------------------
+    returns = prices.pct_change().replace([pd.NA, pd.NaT], 0).fillna(0)
 
-    print("\n===== RETURNS CHECK =====")
-    print("TYPE:", type(returns))
-    print("RETURNS SHAPE:", getattr(returns, "shape", "N/A"))
+    if returns.empty:
+        raise ValueError("Returns are empty")
 
-    if isinstance(returns, pd.DataFrame):
-        print(returns.describe())
-    else:
-        print("⚠️ Returns is not a DataFrame")
+    print("RETURNS CHECK:", returns.shape)
 
-    # 🔥 FIX: type-safe validation
-    if not isinstance(returns, pd.DataFrame) or returns.empty:
-        raise ValueError("❌ Returns are empty — upstream issue")
-
-    # ======================================================
+    # ---------------------------
     # 3. SIGNALS
-    # ======================================================
+    # ---------------------------
     signals = generate_signals(returns)
 
-    print("\n===== SIGNALS CHECK =====")
+    if not isinstance(signals, pd.DataFrame) or signals.empty:
+        raise ValueError("Signals invalid")
 
-    if isinstance(signals, pd.DataFrame):
-        print(signals.head())
-    else:
-        print("⚠️ Signals is not a DataFrame")
+    print("SIGNALS CHECK:", signals.shape)
 
-    if signals is None or (isinstance(signals, pd.DataFrame) and signals.empty):
-        print("⚠️ Signals are empty")
-
-    # ======================================================
+    # ---------------------------
     # 4. PORTFOLIO
-    # ======================================================
-    weights = construct_portfolio(signals, prices, capital, config)
+    # ---------------------------
+    weights = construct_portfolio(
+        signals=signals,
+        prices=prices,
+        capital=params.get("capital", 1_000_000),
+        config=params,
+    )
 
-    print("\n===== PORTFOLIO CHECK =====")
+    if not isinstance(weights, pd.DataFrame) or weights.empty:
+        raise ValueError("Weights invalid")
 
-    if isinstance(weights, pd.DataFrame):
-        print(weights.head())
-        try:
-            print("Row sums:", weights.sum(axis=1).head())
-        except Exception:
-            print("⚠️ Could not compute row sums")
-    else:
-        print("⚠️ Weights is not a DataFrame")
+    print("PORTFOLIO CHECK:", weights.shape)
 
-    if weights is None or (isinstance(weights, pd.DataFrame) and weights.empty):
-        print("⚠️ Weights are empty")
+    # ---------------------------
+    # 5. PNL
+    # ---------------------------
+    pnl, equity_curve = compute_pnl(weights, returns)
 
-    # ======================================================
-    # 5. PnL
-    # ======================================================
-    pnl = compute_pnl(weights, returns)
+    if pnl is None or equity_curve is None:
+        raise ValueError("PnL computation failed")
 
-    print("\n===== PNL CHECK =====")
+    print("PNL CHECK:", pnl.shape)
 
-    if isinstance(pnl, pd.DataFrame):
-        print(pnl.head())
-    else:
-        print("⚠️ PnL is not a DataFrame")
-
-    # ======================================================
-    # FINAL OUTPUT
-    # ======================================================
-    print("\n==============================")
-    print("✅ PIPELINE COMPLETE")
-    print("==============================")
-
-    return {
+    # ---------------------------
+    # ✅ STANDARDIZED OUTPUT CONTRACT
+    # ---------------------------
+    result = {
         "prices": prices,
         "returns": returns,
         "signals": signals,
         "weights": weights,
         "pnl": pnl,
+        "equity": equity_curve,  # ✅ CRITICAL FIX
     }
+
+    return result
