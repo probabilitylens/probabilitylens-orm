@@ -1,19 +1,29 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 
-def compute_portfolio_vol(w, cov):
-    out=[]
-    for d in w.index:
-        c=cov.get(d)
-        if c is None: out.append(np.nan); continue
-        ww=w.loc[d].values
-        out.append(np.sqrt(ww.T@c@ww)*np.sqrt(252))
-    return pd.Series(out,index=w.index)
 
-def compute_sharpe(r):
-    return 0 if r.std()==0 else r.mean()/r.std()*np.sqrt(252)
+def compute_volatility(returns):
+    """
+    Rolling volatility (annualized)
+    """
+    if returns is None or len(returns) == 0:
+        return pd.Series(dtype=float)
 
-def compute_information_ratio(p,b):
-    df = pd.concat([p,b],axis=1).dropna()
-    a = df.iloc[:,0]-df.iloc[:,1]
-    return 0 if a.std()==0 else a.mean()/a.std()*np.sqrt(252)
+    vol = returns.std(axis=1) * np.sqrt(252)
+    return vol
+
+
+def compute_information_ratio(returns, benchmark=None):
+    """
+    Information Ratio vs benchmark
+    """
+    if returns is None or len(returns) == 0:
+        return None
+
+    if benchmark is None:
+        benchmark = returns.iloc[:, 0]
+
+    excess = returns.sub(benchmark, axis=0)
+
+    ir = excess.mean() / excess.std()
+    return ir.mean()
