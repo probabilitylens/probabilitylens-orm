@@ -112,27 +112,48 @@ def compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==========================================================
-# FALLBACK DATA GENERATOR
+# FALLBACK DATA GENERATOR (FIXED)
 # ==========================================================
 def _generate_fallback_data(tickers, start, end):
     """
     Generate synthetic price data to prevent pipeline failure.
     """
 
-    dates = pd.date_range(start=start, end=end, freq="B")
+    print("⚠️ USING FALLBACK DATA")
 
-    if len(dates) == 0 or tickers is None:
+    # ----------------------------
+    # SAFE DATE HANDLING
+    # ----------------------------
+    try:
+        dates = pd.date_range(start=start, end=end, freq="B")
+
+        # Ensure non-empty
+        if len(dates) == 0:
+            raise ValueError("Invalid date range")
+
+    except Exception:
+        # Fallback to safe default window
+        dates = pd.date_range(end=pd.Timestamp.today(), periods=252, freq="B")
+
+    # ----------------------------
+    # SAFETY CHECK
+    # ----------------------------
+    if tickers is None or len(tickers) == 0:
         return pd.DataFrame()
 
+    # ----------------------------
+    # GENERATE SYNTHETIC DATA
+    # ----------------------------
     np.random.seed(42)
 
     data = {}
     for ticker in tickers:
-        # geometric random walk (non-degenerate)
         returns = 0.001 * np.random.randn(len(dates))
         prices = 100 * np.cumprod(1 + returns)
         data[ticker] = prices
 
     df = pd.DataFrame(data, index=dates)
+
+    print("✅ Fallback prices:", df.shape)
 
     return df
