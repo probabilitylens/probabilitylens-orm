@@ -1,30 +1,34 @@
-import risk.decomposition as d
-import os
+# app.py
 
-print("=== RUNTIME DEBUG ===")
-print("FILE:", d.__file__)
-print("EXISTS:", os.path.exists(d.__file__))
-
-with open(d.__file__, "r") as f:
-    print("FIRST 20 LINES:")
-    print("".join(f.readlines()[:20]))
 import streamlit as st
 from pipeline import run_pipeline
 
-st.set_page_config(layout="wide")
-
-params={
- "capital":1_000_000,
- "signal":{"momentum_weight":0.5,"meanrev_weight":0.5},
- "portfolio":{"max_weight":0.25},
- "execution":{"execute":False,"min_order_size":0},
- "costs":{"transaction_cost":0.0005,"slippage":0.0005}
-}
-
-res=run_pipeline(params)
-
 st.title("ProbabilityLens")
 
+params = {
+    "tickers": ["CL=F", "DX-Y.NYB", "GLD", "SPY", "TLT", "XLE"],
+    "start": "2020-01-01",
+    "end": None,
+    "capital": 1_000_000,
+    "max_leverage": 1.0,
+}
+
+res = run_pipeline(params)
+
+# ---------------------------
+# Defensive Check (MANDATORY)
+# ---------------------------
+if "equity" not in res:
+    st.error(f"Missing 'equity' in pipeline output. Keys: {list(res.keys())}")
+    st.stop()
+
+# ---------------------------
+# Chart
+# ---------------------------
+st.subheader("Equity Curve")
 st.line_chart(res["equity"])
-st.dataframe(res["execution_report"])
-st.write(res["reasoning"])
+
+# Optional debug visibility
+with st.expander("Debug Info"):
+    st.write("Keys:", list(res.keys()))
+    st.write("Equity tail:", res["equity"].tail())
