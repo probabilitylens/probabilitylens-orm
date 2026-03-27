@@ -1,15 +1,24 @@
 import yfinance as yf
-import numpy as np
-from config.settings import *
-from plogging.logger import log
-from data.validator_new import validate_prices, validate_returns
+import pandas as pd
+
+ASSETS = ["CL=F", "XLE", "SPY", "TLT", "DX-Y.NYB", "GLD"]
 
 def load_market_data():
-    raw = yf.download(ASSETS, period=DATA_PERIOD, auto_adjust=AUTO_ADJUST, progress=False)
-    prices = raw["Close"] if isinstance(raw.columns, tuple) else raw
-    prices = prices.ffill().dropna()
-    return validate_prices(prices)
 
-def compute_returns(prices):
-    returns = np.log(prices / prices.shift(1)).dropna()
-    return validate_returns(returns)
+    data = yf.download(
+        ASSETS,
+        period="2y",
+        interval="1d",
+        auto_adjust=True,
+        progress=False
+    )
+
+    # ✅ Keep ONLY Close prices
+    if isinstance(data.columns, pd.MultiIndex):
+        data = data["Close"]
+
+    # ✅ Clean
+    data = data.dropna(how="all")
+    data = data.ffill()
+
+    return data
