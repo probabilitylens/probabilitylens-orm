@@ -1,27 +1,42 @@
 import pandas as pd
 
-# DATA
+# ==========================================================
+# IMPORTS (MATCH YOUR STRUCTURE)
+# ==========================================================
+
+# Data layer
 from data.loader import load_market_data, compute_returns
 
-# (placeholders — adjust to your actual modules)
+# Features / signals
 from features.signals import generate_signals
-from portfolio.constructor import construct_portfolio
+
+# Portfolio
+from portfolio.construction import construct_portfolio
+
+# PnL
 from pnl.engine import compute_pnl
 
 
 # ==========================================================
 # MAIN PIPELINE
 # ==========================================================
-def run_pipeline(params):
+def run_pipeline(params: dict):
     """
     Main orchestrator for ProbabilityLens
     """
 
+    # ----------------------------
+    # PARAMS
+    # ----------------------------
     tickers = params.get("tickers", [])
     start = params.get("start")
     end = params.get("end")
     capital = params.get("capital", 100000)
     config = params.get("config", {})
+
+    print("\n==============================")
+    print("🚀 RUN PIPELINE START")
+    print("==============================")
 
     # ======================================================
     # 1. LOAD DATA
@@ -32,8 +47,8 @@ def run_pipeline(params):
     print("PRICES SHAPE:", prices.shape)
     print(prices.head())
 
-    if prices.empty:
-        raise ValueError("Prices are empty — data layer failure")
+    if prices is None or prices.empty:
+        raise ValueError("❌ Prices are empty — data layer failure")
 
     # ======================================================
     # 2. RETURNS
@@ -44,8 +59,8 @@ def run_pipeline(params):
     print("RETURNS SHAPE:", returns.shape)
     print(returns.describe())
 
-    if returns.empty:
-        raise ValueError("Returns are empty — upstream issue")
+    if returns is None or returns.empty:
+        raise ValueError("❌ Returns are empty — upstream issue")
 
     # ======================================================
     # 3. SIGNALS
@@ -65,7 +80,11 @@ def run_pipeline(params):
 
     print("\n===== PORTFOLIO CHECK =====")
     print(weights.head())
-    print("Row sums:", weights.sum(axis=1).head())
+
+    try:
+        print("Row sums:", weights.sum(axis=1).head())
+    except Exception:
+        print("⚠️ Could not compute row sums")
 
     if weights is None or weights.empty:
         print("⚠️ Weights are empty")
@@ -79,8 +98,12 @@ def run_pipeline(params):
     print(pnl.head())
 
     # ======================================================
-    # OUTPUT
+    # FINAL OUTPUT
     # ======================================================
+    print("\n==============================")
+    print("✅ PIPELINE COMPLETE")
+    print("==============================")
+
     return {
         "prices": prices,
         "returns": returns,
