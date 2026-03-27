@@ -1,100 +1,125 @@
-import risk.decomposition as d
-print("DECOMP FILE:", d.__file__)
+import pandas as pd
 
-from plogging.logger import get_logs
-
+# ----------------------------
+# DATA
+# ----------------------------
 from data.loader import load_market_data, compute_returns
+
+# ----------------------------
+# FEATURES / SIGNALS
+# ----------------------------
 from features.signals import generate_signals
-from portfolio.construction import build_portfolio
-from pnl.engine import run_pnl_pipeline
-from risk.covariance import build_covariance_dict
-from risk.metrics import *
+
+# ----------------------------
+# PORTFOLIO
+# ----------------------------
+from portfolio.construction import construct_portfolio
+
+# ----------------------------
+# RISK
+# ----------------------------
+from risk.metrics import compute_volatility, compute_information_ratio
 from risk.decomposition import compute_risk_contribution
-from execution.engine import run_execution_pipeline
-from state.manager import *
-from regime.detection import run_regime_pipeline
+
+# ----------------------------
+# REGIME
+# ----------------------------
+from regime.detector import detect_regime
+
+# ----------------------------
+# EXECUTION (FIXED)
+# ----------------------------
+from execution.engine import simulate_execution
+
+# ----------------------------
+# REASONING
+# ----------------------------
 from reasoning.engine import generate_reasoning
-from reporting.builder import build_report
 
 
 def run_pipeline(params):
+    """
+    Main orchestration pipeline for ProbabilityLens
+    """
 
     # ----------------------------
-    # DATA
+    # PARAMETERS
     # ----------------------------
-    prices = load_market_data()
+    tickers = params.get("tickers", ["SPY", "TLT", "GLD"])
+    start = params.get("start", "2020-01-01")
+    end = params.get("end", None)
+
+    # ----------------------------
+    # LOAD DATA
+    # ----------------------------
+    prices = load_market_data(tickers, start=start, end=end)
+
+    if prices is None or len(prices) == 0:
+        return {}
+
+    # ----------------------------
+    # RETURNS
+    # ----------------------------
     returns = compute_returns(prices)
+
+    if returns is None or len(returns) == 0:
+        return {}
 
     # ----------------------------
     # SIGNALS
     # ----------------------------
-    signals = generate_signals(returns, params["signal"])
+    signals = generate_signals(returns)
+
+    if signals is None or len(signals) == 0:
+        return {}
 
     # ----------------------------
-    # STATE
+    # PORTFOLIO CONSTRUCTION
     # ----------------------------
-    state = load_state()
-    if state is None:
-        state = initialize_state(prices)
+    weights = construct_portfolio(signals, returns)
+
+    if weights is None or len(weights) == 0:
+        return {}
 
     # ----------------------------
-    # PORTFOLIO
+    # RISK METRICS
     # ----------------------------
-    weights, pos = build_portfolio(
-        signals, prices, params["capital"], params["portfolio"]
-    )
+    vol = compute_volatility(returns)
 
-    # ----------------------------
-    # PnL
-    # ----------------------------
-    pnl_data = run_pnl_pipeline(
-        pos, prices, params["capital"], params["costs"]
-    )
+    try:
+        ir = compute_information_ratio(returns)
+    except Exception:
+        ir = None
 
-    # ----------------------------
-    # RISK
-    # ----------------------------
-    cov = build_covariance_dict(returns)
-
-    vol = compute_portfolio_vol(weights, cov)
-    sharpe = compute_sharpe(pnl_data["returns"])
-
-    # ✅ SAFE benchmark handling
-    if hasattr(returns, "columns") and "SPY" in returns.columns:
-        benchmark = returns["SPY"]
-    else:
-        benchmark = returns.iloc[:, 0]
-
-    ir = compute_information_ratio(pnl_data["returns"], benchmark)
+    # Covariance matrix
+    try:
+        cov = returns.cov()
+    except Exception:
+        cov = None
 
     rc = compute_risk_contribution(weights, cov)
 
     # ----------------------------
-    # REGIME
+    # REGIME DETECTION
     # ----------------------------
-    regime = run_regime_pipeline(returns)
+    regime = detect_regime(returns)
 
     # ----------------------------
-    # EXECUTION (SAFE STATE)
+    # EXECUTION (FIXED HERE)
     # ----------------------------
-    if isinstance(state, dict):
-        current_positions = state.get("positions", None)
-    else:
-        current_positions = getattr(state, "positions", None)
-
-    # ✅ CRITICAL FIX: ensure valid subtraction
-    if current_positions is None:
-        current_positions = pos * 0
-
-    exec_rep = run_execution_pipeline(
-        pos, current_positions, prices, params["execution"]
+    positions, notionals, execution_report = simulate_execution(
+        weights=weights,
+        prices=prices,
+        initial_capital=1_000_000,
     )
 
     # ----------------------------
-    # STATE UPDATE
+    # PnL (simple version)
     # ----------------------------
-    state = update_state(state, pos, pnl_data["equity"])
-    save_state(state)
+    try:
+        pnl = (positions.shift(1) * prices.pct_change()).sum(axis=1).cumsum()
+    except Exception:
+        pnl = pd.Series(dtype=float)
 
     # ----------------------------
     # REASONING
@@ -102,37 +127,25 @@ def run_pipeline(params):
     reasoning = generate_reasoning({
         "weights": weights,
         "signals": signals,
+        "regime": regime,
         "vol": vol,
-        "risk_contribution": rc,
-        "regime": regime["regime"],
-        "confidence": regime["confidence"]
     })
 
     # ----------------------------
-    # REPORT
-    # ----------------------------
-    report = build_report({
-        "equity": pnl_data["equity"],
-        "reasoning": reasoning
-    })
-
-    # ----------------------------
-    # OUTPUT
+    # FINAL OUTPUT
     # ----------------------------
     return {
         "prices": prices,
+        "returns": returns,
         "signals": signals,
         "weights": weights,
-        "positions": pos,
-        "pnl": pnl_data["pnl"],
-        "equity": pnl_data["equity"],
-        "vol": vol,
+        "volatility": vol,
+        "information_ratio": ir,
         "risk_contribution": rc,
-        "sharpe": sharpe,
-        "ir": ir,
-        "regime": regime["regime"],
-        "execution_report": exec_rep,
+        "regime": regime,
+        "positions": positions,
+        "notionals": notionals,
+        "execution_report": execution_report,
+        "pnl": pnl,
         "reasoning": reasoning,
-        "report": report,
-        "logs": get_logs()
     }
