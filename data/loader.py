@@ -68,7 +68,7 @@ def load_market_data(tickers, start, end):
         # Drop columns that are entirely NaN
         prices = prices.dropna(axis=1, how="all")
 
-        # 🔥 CRITICAL FIX (NEW GUARD)
+        # 🔥 FIX: detect post-clean collapse
         if prices is None or prices.empty or prices.shape[1] == 0:
             raise ValueError("Prices became empty after cleaning")
 
@@ -92,25 +92,36 @@ def load_market_data(tickers, start, end):
 def compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
     """
     Compute returns from price data.
+
+    Parameters:
+        prices: DataFrame (time x assets)
+
+    Returns:
+        DataFrame (time x assets)
     """
 
     if prices is None or prices.empty:
         return pd.DataFrame()
 
+    # Percent change
     returns = prices.pct_change()
 
+    # Clean infinities
     returns = returns.replace([np.inf, -np.inf], np.nan)
+
+    # Drop rows where all values are NaN
     returns = returns.dropna(how="all")
 
     return returns
 
 
 # ==========================================================
-# FALLBACK DATA GENERATOR
+# FALLBACK DATA GENERATOR (FINAL FIXED VERSION)
 # ==========================================================
 def _generate_fallback_data(tickers, start, end):
     """
     Generate synthetic price data to prevent pipeline failure.
+    ALWAYS returns non-empty valid DataFrame.
     """
 
     print("⚠️ USING FALLBACK DATA")
@@ -129,10 +140,11 @@ def _generate_fallback_data(tickers, start, end):
         dates = pd.date_range(end=pd.Timestamp.today(), periods=252, freq="B")
 
     # ----------------------------
-    # SAFETY CHECK
+    # 🔥 FIX: ensure tickers exist
     # ----------------------------
     if tickers is None or len(tickers) == 0:
-        return pd.DataFrame()
+        print("⚠️ No tickers provided — using default ['SPY']")
+        tickers = ["SPY"]
 
     # ----------------------------
     # GENERATE SYNTHETIC DATA
@@ -146,6 +158,10 @@ def _generate_fallback_data(tickers, start, end):
         data[ticker] = prices
 
     df = pd.DataFrame(data, index=dates)
+
+    # 🔥 FINAL GUARANTEE
+    if df is None or df.empty:
+        raise ValueError("Fallback generation failed — critical")
 
     print("✅ Fallback prices:", df.shape)
 
