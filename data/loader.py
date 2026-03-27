@@ -68,7 +68,7 @@ def load_market_data(tickers, start, end):
         # Drop columns that are entirely NaN
         prices = prices.dropna(axis=1, how="all")
 
-        # 🔥 FIX: detect post-clean collapse
+        # 🔥 Detect post-clean collapse
         if prices is None or prices.empty or prices.shape[1] == 0:
             raise ValueError("Prices became empty after cleaning")
 
@@ -92,36 +92,26 @@ def load_market_data(tickers, start, end):
 def compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
     """
     Compute returns from price data.
-
-    Parameters:
-        prices: DataFrame (time x assets)
-
-    Returns:
-        DataFrame (time x assets)
     """
 
     if prices is None or prices.empty:
         return pd.DataFrame()
 
-    # Percent change
     returns = prices.pct_change()
 
-    # Clean infinities
     returns = returns.replace([np.inf, -np.inf], np.nan)
-
-    # Drop rows where all values are NaN
     returns = returns.dropna(how="all")
 
     return returns
 
 
 # ==========================================================
-# FALLBACK DATA GENERATOR (FINAL FIXED VERSION)
+# FALLBACK DATA GENERATOR (FINAL HARDENED VERSION)
 # ==========================================================
 def _generate_fallback_data(tickers, start, end):
     """
     Generate synthetic price data to prevent pipeline failure.
-    ALWAYS returns non-empty valid DataFrame.
+    ALWAYS returns a valid non-empty DataFrame.
     """
 
     print("⚠️ USING FALLBACK DATA")
@@ -132,18 +122,18 @@ def _generate_fallback_data(tickers, start, end):
     try:
         dates = pd.date_range(start=start, end=end, freq="B")
 
-        if len(dates) == 0:
-            raise ValueError("Invalid date range")
+        if len(dates) < 20:
+            raise ValueError("Invalid or too-short date range")
 
     except Exception:
         # fallback to safe default window
         dates = pd.date_range(end=pd.Timestamp.today(), periods=252, freq="B")
 
     # ----------------------------
-    # 🔥 FIX: ensure tickers exist
+    # SAFE TICKERS
     # ----------------------------
-    if tickers is None or len(tickers) == 0:
-        print("⚠️ No tickers provided — using default ['SPY']")
+    if not isinstance(tickers, list) or len(tickers) == 0:
+        print("⚠️ Invalid tickers — using default ['SPY']")
         tickers = ["SPY"]
 
     # ----------------------------
@@ -151,17 +141,22 @@ def _generate_fallback_data(tickers, start, end):
     # ----------------------------
     np.random.seed(42)
 
-    data = {}
-    for ticker in tickers:
-        returns = 0.001 * np.random.randn(len(dates))
-        prices = 100 * np.cumprod(1 + returns)
-        data[ticker] = prices
+    arr = np.random.randn(len(dates), len(tickers)) * 0.001
+    prices = 100 * np.cumprod(1 + arr, axis=0)
 
-    df = pd.DataFrame(data, index=dates)
+    df = pd.DataFrame(prices, index=dates, columns=tickers)
 
-    # 🔥 FINAL GUARANTEE
-    if df is None or df.empty:
-        raise ValueError("Fallback generation failed — critical")
+    # ----------------------------
+    # 🔥 HARD VALIDATION
+    # ----------------------------
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("Fallback did not return DataFrame")
+
+    if df.empty:
+        raise ValueError("Fallback produced empty DataFrame")
+
+    if df.shape[0] < 20 or df.shape[1] == 0:
+        raise ValueError("Fallback produced invalid shape")
 
     print("✅ Fallback prices:", df.shape)
 
