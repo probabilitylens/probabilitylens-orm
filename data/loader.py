@@ -68,10 +68,14 @@ def load_market_data(tickers, start, end):
         # Drop columns that are entirely NaN
         prices = prices.dropna(axis=1, how="all")
 
+        # 🔥 CRITICAL FIX (NEW GUARD)
+        if prices is None or prices.empty or prices.shape[1] == 0:
+            raise ValueError("Prices became empty after cleaning")
+
         # ----------------------------
         # MINIMUM DATA CHECK
         # ----------------------------
-        if prices.shape[0] < 20 or prices.shape[1] == 0:
+        if prices.shape[0] < 20:
             raise ValueError("Insufficient data after cleaning")
 
         return prices
@@ -88,31 +92,21 @@ def load_market_data(tickers, start, end):
 def compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
     """
     Compute returns from price data.
-
-    Parameters:
-        prices: DataFrame (time x assets)
-
-    Returns:
-        DataFrame (time x assets)
     """
 
     if prices is None or prices.empty:
         return pd.DataFrame()
 
-    # Percent change
     returns = prices.pct_change()
 
-    # Clean infinities
     returns = returns.replace([np.inf, -np.inf], np.nan)
-
-    # Drop rows where all values are NaN
     returns = returns.dropna(how="all")
 
     return returns
 
 
 # ==========================================================
-# FALLBACK DATA GENERATOR (FIXED)
+# FALLBACK DATA GENERATOR
 # ==========================================================
 def _generate_fallback_data(tickers, start, end):
     """
@@ -127,12 +121,11 @@ def _generate_fallback_data(tickers, start, end):
     try:
         dates = pd.date_range(start=start, end=end, freq="B")
 
-        # Ensure non-empty
         if len(dates) == 0:
             raise ValueError("Invalid date range")
 
     except Exception:
-        # Fallback to safe default window
+        # fallback to safe default window
         dates = pd.date_range(end=pd.Timestamp.today(), periods=252, freq="B")
 
     # ----------------------------
