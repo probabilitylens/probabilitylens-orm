@@ -1,46 +1,26 @@
+# pnl/engine.py
+
 import pandas as pd
-import numpy as np
 
 
-def compute_pnl(weights: pd.DataFrame,
-                returns: pd.DataFrame) -> pd.DataFrame:
+def compute_pnl(weights: pd.DataFrame, returns: pd.DataFrame):
     """
-    Compute portfolio PnL and equity curve.
+    Computes daily PnL and equity curve.
     """
 
-    # ----------------------------
-    # VALIDATION
-    # ----------------------------
-    if weights is None or weights.empty:
-        return pd.DataFrame()
+    # Align
+    weights, returns = weights.align(returns, join="inner", axis=0)
 
-    if returns is None or returns.empty:
-        return pd.DataFrame()
+    # Daily PnL
+    pnl = (weights.shift(1) * returns).sum(axis=1)
 
-    # ----------------------------
-    # ALIGN INDEX
-    # ----------------------------
-    weights = weights.reindex(returns.index).fillna(0)
+    pnl = pnl.replace([float("inf"), -float("inf")], 0).fillna(0)
 
-    # ----------------------------
-    # PnL CALCULATION
-    # ----------------------------
-    pnl = (weights * returns).sum(axis=1)
+    # Equity curve
+    equity_curve = (1 + pnl).cumprod()
 
-    pnl = pnl.replace([np.inf, -np.inf], 0)
-    pnl = pnl.fillna(0)
+    # Defensive guarantees
+    if pnl.empty or equity_curve.empty:
+        raise ValueError("PnL or equity is empty")
 
-    # ----------------------------
-    # EQUITY CURVE
-    # ----------------------------
-    equity = (1 + pnl).cumprod()
-
-    # ----------------------------
-    # OUTPUT
-    # ----------------------------
-    result = pd.DataFrame({
-        "pnl": pnl,
-        "equity": equity
-    })
-
-    return result
+    return pnl, equity_curve
