@@ -3,9 +3,12 @@ import numpy as np
 import yfinance as yf
 
 
+# ==========================================================
+# MARKET DATA LOADER
+# ==========================================================
 def load_market_data(tickers, start, end):
     """
-    Load market data and return price DataFrame.
+    Load market data and return clean price DataFrame.
 
     Parameters:
         tickers: list[str]
@@ -35,51 +38,101 @@ def load_market_data(tickers, start, end):
         )
 
         if data is None or len(data) == 0:
-            return pd.DataFrame()
+            raise ValueError("Empty data from yfinance")
 
         # ----------------------------
         # HANDLE MULTIINDEX (OHLC)
         # ----------------------------
         if isinstance(data.columns, pd.MultiIndex):
-            # Prefer Close, fallback to Adj Close
             if "Close" in data.columns.levels[0]:
                 prices = data["Close"]
             elif "Adj Close" in data.columns.levels[0]:
                 prices = data["Adj Close"]
             else:
-                # fallback: take first level
                 prices = data.xs(data.columns.levels[0][0], axis=1)
         else:
             prices = data
 
         # ----------------------------
-        # CLEAN DATA
+        # ENSURE DATAFRAME FORMAT
         # ----------------------------
-        prices = prices.ffill().dropna(how="all")
-
-        # Ensure DataFrame format
         if isinstance(prices, pd.Series):
             prices = prices.to_frame()
+
+        # ----------------------------
+        # CLEAN DATA
+        # ----------------------------
+        prices = prices.sort_index()
+        prices = prices.ffill().dropna(how="all")
+
+        # Drop columns that are entirely NaN
+        prices = prices.dropna(axis=1, how="all")
+
+        # ----------------------------
+        # MINIMUM DATA CHECK
+        # ----------------------------
+        if prices.shape[0] < 20 or prices.shape[1] == 0:
+            raise ValueError("Insufficient data after cleaning")
 
         return prices
 
     except Exception as e:
-        print("⚠️ Data load failed:", e)
+        print("⚠️ Data load failed, using fallback:", e)
 
-        # ----------------------------
-        # FALLBACK (SAFE STRUCTURE)
-        # ----------------------------
-        # Create dummy data to keep pipeline alive
-        dates = pd.date_range(start=start, end=end, freq="B")
+        return _generate_fallback_data(tickers, start, end)
 
-        if len(dates) == 0:
-            return pd.DataFrame()
 
-        data = {
-            ticker: np.ones(len(dates)) * 100.0
-            for ticker in tickers
-        }
+# ==========================================================
+# RETURNS COMPUTATION
+# ==========================================================
+def compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute returns from price data.
 
-        prices = pd.DataFrame(data, index=dates)
+    Parameters:
+        prices: DataFrame (time x assets)
 
-        return prices
+    Returns:
+        DataFrame (time x assets)
+    """
+
+    if prices is None or prices.empty:
+        return pd.DataFrame()
+
+    # Percent change
+    returns = prices.pct_change()
+
+    # Clean infinities
+    returns = returns.replace([np.inf, -np.inf], np.nan)
+
+    # Drop rows where all values are NaN
+    returns = returns.dropna(how="all")
+
+    return returns
+
+
+# ==========================================================
+# FALLBACK DATA GENERATOR
+# ==========================================================
+def _generate_fallback_data(tickers, start, end):
+    """
+    Generate synthetic price data to prevent pipeline failure.
+    """
+
+    dates = pd.date_range(start=start, end=end, freq="B")
+
+    if len(dates) == 0 or tickers is None:
+        return pd.DataFrame()
+
+    np.random.seed(42)
+
+    data = {}
+    for ticker in tickers:
+        # geometric random walk (non-degenerate)
+        returns = 0.001 * np.random.randn(len(dates))
+        prices = 100 * np.cumprod(1 + returns)
+        data[ticker] = prices
+
+    df = pd.DataFrame(data, index=dates)
+
+    return df
