@@ -1,3 +1,13 @@
+import risk.decomposition as d
+import os
+
+print("=== RUNTIME DEBUG ===")
+print("FILE:", d.__file__)
+print("EXISTS:", os.path.exists(d.__file__))
+
+with open(d.__file__, "r") as f:
+    print("FIRST 20 LINES:")
+    print("".join(f.readlines()[:20]))
 import streamlit as st
 from pipeline import run_pipeline
 
