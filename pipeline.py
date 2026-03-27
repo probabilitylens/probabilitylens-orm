@@ -32,7 +32,12 @@ def run_pipeline(params):
 
     vol=compute_portfolio_vol(weights,cov)
     sharpe=compute_sharpe(pnl_data["returns"])
-    ir=compute_information_ratio(pnl_data["returns"],returns["SPY"])
+    if "SPY" in returns.columns:
+    benchmark = returns["SPY"]
+else:
+    benchmark = returns.iloc[:, 0]
+
+ir = compute_information_ratio(pnl_data["returns"], benchmark)
 
     rc=compute_risk_contribution(weights,cov)
 
