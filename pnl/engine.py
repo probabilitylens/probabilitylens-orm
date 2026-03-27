@@ -2,22 +2,10 @@ import pandas as pd
 import numpy as np
 
 
-# ==========================================================
-# PnL ENGINE
-# ==========================================================
 def compute_pnl(weights: pd.DataFrame,
                 returns: pd.DataFrame) -> pd.DataFrame:
     """
     Compute portfolio PnL and equity curve.
-
-    Parameters:
-        weights: DataFrame (time x assets)
-        returns: DataFrame (time x assets)
-
-    Returns:
-        DataFrame with:
-            - pnl (daily returns)
-            - equity (cumulative)
     """
 
     # ----------------------------
@@ -30,12 +18,12 @@ def compute_pnl(weights: pd.DataFrame,
         return pd.DataFrame()
 
     # ----------------------------
-    # ALIGN DATA
+    # ALIGN INDEX
     # ----------------------------
     weights = weights.reindex(returns.index).fillna(0)
 
     # ----------------------------
-    # COMPUTE PnL
+    # PnL CALCULATION
     # ----------------------------
     pnl = (weights * returns).sum(axis=1)
 
@@ -50,9 +38,9 @@ def compute_pnl(weights: pd.DataFrame,
     # ----------------------------
     # OUTPUT
     # ----------------------------
-    df = pd.DataFrame({
+    result = pd.DataFrame({
         "pnl": pnl,
         "equity": equity
     })
 
-    return df
+    return result
