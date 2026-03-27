@@ -11,3 +11,4 @@ reportlab
 kaleido==0.2.1
 openpyxl
 xlrd
+scipy
