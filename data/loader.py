@@ -13,12 +13,14 @@ def load_market_data():
         progress=False
     )
 
-    # ✅ Keep ONLY Close prices
     if isinstance(data.columns, pd.MultiIndex):
         data = data["Close"]
 
-    # ✅ Clean
     data = data.dropna(how="all")
     data = data.ffill()
 
     return data
+
+
+def compute_returns(prices):
+    return prices.pct_change().dropna()
