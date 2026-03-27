@@ -7,37 +7,43 @@ def compute_risk_contribution(weights, cov):
     # ----------------------------
     # SAFETY CHECKS
     # ----------------------------
-    if weights is None or len(weights) == 0:
+    if weights is None:
+        return {}
+
+    try:
+        if len(weights) == 0:
+            return {}
+    except:
         return {}
 
     if cov is None:
         return {}
 
-    # ✅ Handle dict covariance (your case)
+    # ----------------------------
+    # HANDLE DICT COVARIANCE
+    # ----------------------------
     if isinstance(cov, dict):
-        # take latest covariance matrix
-        cov = list(cov.values())[-1]
+        try:
+            cov = list(cov.values())[-1]
+        except:
+            return {}
 
-    # Now cov should be a DataFrame
+    # ----------------------------
+    # VALIDATE TYPE
+    # ----------------------------
     if not isinstance(cov, pd.DataFrame):
         return {}
 
-    if cov.empty:
+    if cov.shape[0] == 0:
         return {}
 
     # ----------------------------
-    # ALIGN DATA
+    # COMPUTE
     # ----------------------------
     try:
         w = weights.iloc[-1].values
         cov_matrix = cov.values
-    except Exception:
-        return {}
 
-    # ----------------------------
-    # COMPUTE CONTRIBUTION
-    # ----------------------------
-    try:
         portfolio_var = w.T @ cov_matrix @ w
 
         if portfolio_var == 0:
