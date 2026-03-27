@@ -2,7 +2,7 @@ import yfinance as yf
 import numpy as np
 from config.settings import *
 from plogging.logger import log
-from data.validator import validate_prices, validate_returns
+from data.validator_new import validate_prices, validate_returns
 
 def load_market_data():
     raw = yf.download(ASSETS, period=DATA_PERIOD, auto_adjust=AUTO_ADJUST, progress=False)
