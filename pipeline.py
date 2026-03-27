@@ -1,151 +1,90 @@
 import pandas as pd
 
-# ----------------------------
 # DATA
-# ----------------------------
 from data.loader import load_market_data, compute_returns
 
-# ----------------------------
-# FEATURES / SIGNALS
-# ----------------------------
+# (placeholders — adjust to your actual modules)
 from features.signals import generate_signals
-
-# ----------------------------
-# PORTFOLIO
-# ----------------------------
-from portfolio.construction import construct_portfolio
-
-# ----------------------------
-# RISK
-# ----------------------------
-from risk.metrics import compute_volatility, compute_information_ratio
-from risk.decomposition import compute_risk_contribution
-
-# ----------------------------
-# REGIME
-# ----------------------------
-from regime.detector import detect_regime
-
-# ----------------------------
-# EXECUTION (FIXED)
-# ----------------------------
-from execution.engine import simulate_execution
-
-# ----------------------------
-# REASONING
-# ----------------------------
-from reasoning.engine import generate_reasoning
+from portfolio.constructor import construct_portfolio
+from pnl.engine import compute_pnl
 
 
+# ==========================================================
+# MAIN PIPELINE
+# ==========================================================
 def run_pipeline(params):
     """
-    Main orchestration pipeline for ProbabilityLens
+    Main orchestrator for ProbabilityLens
     """
 
-    # ----------------------------
-    # PARAMETERS
-    # ----------------------------
-    tickers = params.get("tickers", ["SPY", "TLT", "GLD"])
-    start = params.get("start", "2020-01-01")
-    end = params.get("end", None)
+    tickers = params.get("tickers", [])
+    start = params.get("start")
+    end = params.get("end")
+    capital = params.get("capital", 100000)
+    config = params.get("config", {})
 
-    # ----------------------------
-    # LOAD DATA
-    # ----------------------------
-    prices = load_market_data(tickers, start=start, end=end)
+    # ======================================================
+    # 1. LOAD DATA
+    # ======================================================
+    prices = load_market_data(tickers, start, end)
 
-    if prices is None or len(prices) == 0:
-        return {}
+    print("\n===== DATA CHECK =====")
+    print("PRICES SHAPE:", prices.shape)
+    print(prices.head())
 
-    # ----------------------------
-    # RETURNS
-    # ----------------------------
+    if prices.empty:
+        raise ValueError("Prices are empty — data layer failure")
+
+    # ======================================================
+    # 2. RETURNS
+    # ======================================================
     returns = compute_returns(prices)
 
-    if returns is None or len(returns) == 0:
-        return {}
+    print("\n===== RETURNS CHECK =====")
+    print("RETURNS SHAPE:", returns.shape)
+    print(returns.describe())
 
-    # ----------------------------
-    # SIGNALS
-    # ----------------------------
+    if returns.empty:
+        raise ValueError("Returns are empty — upstream issue")
+
+    # ======================================================
+    # 3. SIGNALS
+    # ======================================================
     signals = generate_signals(returns)
 
-    if signals is None or len(signals) == 0:
-        return {}
+    print("\n===== SIGNALS CHECK =====")
+    print(signals.head())
 
-    # ----------------------------
-    # PORTFOLIO CONSTRUCTION
-    # ----------------------------
-    weights = construct_portfolio(signals, returns)
+    if signals is None or signals.empty:
+        print("⚠️ Signals are empty")
 
-    if weights is None or len(weights) == 0:
-        return {}
+    # ======================================================
+    # 4. PORTFOLIO
+    # ======================================================
+    weights = construct_portfolio(signals, prices, capital, config)
 
-    # ----------------------------
-    # RISK METRICS
-    # ----------------------------
-    vol = compute_volatility(returns)
+    print("\n===== PORTFOLIO CHECK =====")
+    print(weights.head())
+    print("Row sums:", weights.sum(axis=1).head())
 
-    try:
-        ir = compute_information_ratio(returns)
-    except Exception:
-        ir = None
+    if weights is None or weights.empty:
+        print("⚠️ Weights are empty")
 
-    # Covariance matrix
-    try:
-        cov = returns.cov()
-    except Exception:
-        cov = None
+    # ======================================================
+    # 5. PnL
+    # ======================================================
+    pnl = compute_pnl(weights, returns)
 
-    rc = compute_risk_contribution(weights, cov)
+    print("\n===== PNL CHECK =====")
+    print(pnl.head())
 
-    # ----------------------------
-    # REGIME DETECTION
-    # ----------------------------
-    regime = detect_regime(returns)
-
-    # ----------------------------
-    # EXECUTION (FIXED HERE)
-    # ----------------------------
-    positions, notionals, execution_report = simulate_execution(
-        weights=weights,
-        prices=prices,
-        initial_capital=1_000_000,
-    )
-
-    # ----------------------------
-    # PnL (simple version)
-    # ----------------------------
-    try:
-        pnl = (positions.shift(1) * prices.pct_change()).sum(axis=1).cumsum()
-    except Exception:
-        pnl = pd.Series(dtype=float)
-
-    # ----------------------------
-    # REASONING
-    # ----------------------------
-    reasoning = generate_reasoning({
-        "weights": weights,
-        "signals": signals,
-        "regime": regime,
-        "vol": vol,
-    })
-
-    # ----------------------------
-    # FINAL OUTPUT
-    # ----------------------------
+    # ======================================================
+    # OUTPUT
+    # ======================================================
     return {
         "prices": prices,
         "returns": returns,
         "signals": signals,
         "weights": weights,
-        "volatility": vol,
-        "information_ratio": ir,
-        "risk_contribution": rc,
-        "regime": regime,
-        "positions": positions,
-        "notionals": notionals,
-        "execution_report": execution_report,
         "pnl": pnl,
-        "reasoning": reasoning,
     }
