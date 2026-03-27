@@ -38,8 +38,8 @@ def run_pipeline(params):
     vol = compute_portfolio_vol(weights, cov)
     sharpe = compute_sharpe(pnl_data["returns"])
 
-    # ✅ SAFE benchmark handling (fixes SPY crash)
-    if "SPY" in returns.columns:
+    # ✅ SAFE benchmark handling
+    if hasattr(returns, "columns") and "SPY" in returns.columns:
         benchmark = returns["SPY"]
     else:
         benchmark = returns.iloc[:, 0]
@@ -50,8 +50,14 @@ def run_pipeline(params):
 
     regime = run_regime_pipeline(returns)
 
+    # ✅ SAFE state handling (dict or object)
+    if isinstance(state, dict):
+        current_positions = state.get("positions", None)
+    else:
+        current_positions = getattr(state, "positions", None)
+
     exec_rep = run_execution_pipeline(
-        pos, state.positions, prices, params["execution"]
+        pos, current_positions, prices, params["execution"]
     )
 
     state = update_state(state, pos, pnl_data["equity"])
