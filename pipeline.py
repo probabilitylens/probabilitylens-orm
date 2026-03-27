@@ -16,23 +16,41 @@ from reporting.builder import build_report
 
 def run_pipeline(params):
 
+    # ----------------------------
+    # DATA
+    # ----------------------------
     prices = load_market_data()
     returns = compute_returns(prices)
 
+    # ----------------------------
+    # SIGNALS
+    # ----------------------------
     signals = generate_signals(returns, params["signal"])
 
+    # ----------------------------
+    # STATE
+    # ----------------------------
     state = load_state()
     if state is None:
         state = initialize_state(prices)
 
+    # ----------------------------
+    # PORTFOLIO
+    # ----------------------------
     weights, pos = build_portfolio(
         signals, prices, params["capital"], params["portfolio"]
     )
 
+    # ----------------------------
+    # PnL
+    # ----------------------------
     pnl_data = run_pnl_pipeline(
         pos, prices, params["capital"], params["costs"]
     )
 
+    # ----------------------------
+    # RISK
+    # ----------------------------
     cov = build_covariance_dict(returns)
 
     vol = compute_portfolio_vol(weights, cov)
@@ -48,21 +66,36 @@ def run_pipeline(params):
 
     rc = compute_risk_contribution(weights, cov)
 
+    # ----------------------------
+    # REGIME
+    # ----------------------------
     regime = run_regime_pipeline(returns)
 
-    # ✅ SAFE state handling (dict or object)
+    # ----------------------------
+    # EXECUTION (SAFE STATE)
+    # ----------------------------
     if isinstance(state, dict):
         current_positions = state.get("positions", None)
     else:
         current_positions = getattr(state, "positions", None)
 
+    # ✅ CRITICAL FIX: ensure valid subtraction
+    if current_positions is None:
+        current_positions = pos * 0
+
     exec_rep = run_execution_pipeline(
         pos, current_positions, prices, params["execution"]
     )
 
+    # ----------------------------
+    # STATE UPDATE
+    # ----------------------------
     state = update_state(state, pos, pnl_data["equity"])
     save_state(state)
 
+    # ----------------------------
+    # REASONING
+    # ----------------------------
     reasoning = generate_reasoning({
         "weights": weights,
         "signals": signals,
@@ -72,11 +105,17 @@ def run_pipeline(params):
         "confidence": regime["confidence"]
     })
 
+    # ----------------------------
+    # REPORT
+    # ----------------------------
     report = build_report({
         "equity": pnl_data["equity"],
         "reasoning": reasoning
     })
 
+    # ----------------------------
+    # OUTPUT
+    # ----------------------------
     return {
         "prices": prices,
         "signals": signals,
