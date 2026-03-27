@@ -1,3 +1,6 @@
+import risk.decomposition as d
+print("DECOMP FILE:", d.__file__)
+
 from plogging.logger import get_logs
 
 from data.loader import load_market_data, compute_returns
