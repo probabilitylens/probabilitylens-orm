@@ -1,4 +1,3 @@
-print("USING NEW DECOMPOSITION FILE")
 import pandas as pd
 import numpy as np
 
@@ -9,12 +8,6 @@ def compute_risk_contribution(weights, cov):
     # SAFETY CHECKS
     # ----------------------------
     if weights is None:
-        return {}
-
-    try:
-        if len(weights) == 0:
-            return {}
-    except:
         return {}
 
     if cov is None:
@@ -30,12 +23,18 @@ def compute_risk_contribution(weights, cov):
             return {}
 
     # ----------------------------
-    # VALIDATE TYPE
+    # VALIDATE TYPES SAFELY
     # ----------------------------
     if not isinstance(cov, pd.DataFrame):
         return {}
 
     if cov.shape[0] == 0:
+        return {}
+
+    if not hasattr(weights, "iloc"):
+        return {}
+
+    if weights.shape[0] == 0:
         return {}
 
     # ----------------------------
